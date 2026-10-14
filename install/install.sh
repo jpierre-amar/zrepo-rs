@@ -347,7 +347,9 @@ EOF
     else
         warn "icône non téléchargée : le lanceur utilisera une icône générique"
     fi
-    need update-desktop-database && update-desktop-database -q "$apps" >/dev/null 2>&1 || true
+    if need update-desktop-database; then
+        update-desktop-database -q "$apps" >/dev/null 2>&1 || true
+    fi
 }
 
 install_macos_app() {
