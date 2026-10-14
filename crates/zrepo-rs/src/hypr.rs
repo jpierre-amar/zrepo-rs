@@ -680,7 +680,10 @@ bindd = SUPER CTRL, R, Menu, exec, wofi\n";
         assert_eq!(fs::read_to_string(&link).unwrap(), "y\n");
         let mode = fs::metadata(&real).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
-        assert!(baks[0].starts_with(dir.join("dotfiles")));
+        // macOS canonicalise /var en /private/var : comparer deux chemins
+        // canoniques pour vérifier que la sauvegarde reste près de la cible.
+        let real_parent = fs::canonicalize(dir.join("dotfiles")).unwrap();
+        assert!(baks[0].starts_with(real_parent));
         fs::remove_dir_all(&dir).unwrap();
     }
 }
