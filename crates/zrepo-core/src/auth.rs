@@ -12,7 +12,15 @@ use crate::{
 
 /// Application OAuth de zrepo-rs, fixee a la compilation. Sans elle, seuls le
 /// jeton personnel et celui de gh sont proposes.
-pub const CLIENT_ID: Option<&str> = option_env!("ZREPO_RS_GITHUB_CLIENT_ID");
+pub const CLIENT_ID: Option<&str> = configured_client_id(option_env!("ZREPO_RS_GITHUB_CLIENT_ID"));
+
+// GitHub Actions injecte une chaîne vide lorsqu'un secret n'est pas configuré.
+const fn configured_client_id(value: Option<&str>) -> Option<&str> {
+    match value {
+        Some(id) if !id.is_empty() => Some(id),
+        _ => None,
+    }
+}
 
 const KEYRING_SERVICE: &str = "zrepo-rs";
 const KEYRING_USER: &str = "github";
@@ -254,6 +262,16 @@ fn poll_result(v: &Value) -> Res<Poll> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_oauth_absent_ou_vide_desactive_le_device_flow() {
+        assert_eq!(configured_client_id(None), None);
+        assert_eq!(configured_client_id(Some("")), None);
+        assert_eq!(
+            configured_client_id(Some("client-test")),
+            Some("client-test")
+        );
+    }
 
     #[test]
     fn erreurs_du_device_flow() {

@@ -35,8 +35,30 @@ push public. Il complète les procédures reproductibles de
 | `actionlint` | OK |
 | Contrat des cinq archives et sommes SHA-256 | OK |
 
-Les exécutions natives Windows et macOS restent confiées à GitHub Actions ; la
-publication d'un tag ne doit avoir lieu qu'après une CI verte sur les trois OS.
+La [CI du commit `0eefb05`](https://github.com/jpierre-amar/zrepo-rs/actions/runs/38625130898)
+est verte : formatage, Clippy, tests et build natifs sur Linux, macOS et
+Windows, ainsi que les installeurs sur les trois OS. La publication d'un tag
+doit attendre une CI verte sur le commit à publier.
+
+## Reprise de la préparation de release
+
+Le 14 octobre 2026, le dépôt ne comporte encore aucune release et aucun
+secret Actions `ZREPO_RS_GITHUB_CLIENT_ID`. L'accès navigateur n'est pas
+disponible dans l'environnement de travail pour enregistrer l'application OAuth.
+
+Un cas propre à GitHub Actions a été corrigé : un secret absent y est injecté
+comme une chaîne vide. Cette valeur désactive désormais la connexion par le
+navigateur, comme une variable absente. Un test couvre ces deux cas et un
+Client ID non vide. La suite compte désormais 38 tests sous Unix.
+
+Avant la première release :
+
+1. Enregistrer l'application OAuth `zrepo-rs` avec Device Flow activé, puis
+   configurer son Client ID selon le README (aucun client secret nécessaire).
+2. Vérifier la CI du commit à publier, puis pousser uniquement le tag `v0.2.0`.
+3. Vérifier les cinq archives publiées et leurs sommes, puis tester l'installation
+   réelle avec des chemins HOME/XDG temporaires.
+4. Valider manuellement le Device Flow et l'ouverture d'un projet dans l'éditeur.
 
 ## Sécurité
 
