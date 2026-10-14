@@ -1,0 +1,24 @@
+[package]
+name = "zrepo-rs"
+description = "Lanceur de projets : ouvre un projet local, distant ou GitHub dans Zed ou Herdr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "zrepo-rs"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "wayland", "x11", "links"] }
+nucleo-matcher = "0.3.1"
+rfd = "0.17.2"
+zrepo-core = { path = "../zrepo-core" }
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console"] }
+
+[build-dependencies]
+embed-resource = "3.0.12"

@@ -1,0 +1,3 @@
+// Icône de l'exécutable (Explorateur, barre des tâches, raccourcis).
+// Chemin relatif valable depuis ce fichier comme depuis le dossier du crate.
+1 ICON "../../packaging/zrepo-rs.ico"

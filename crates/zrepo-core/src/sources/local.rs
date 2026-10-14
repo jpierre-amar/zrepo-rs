@@ -1,4 +1,4 @@
-//! Depots git sous ~/Projects (jusqu'a ZREPO_SCAN_DEPTH niveaux).
+//! Depots git sous ~/Projects (jusqu'a ZREPO_RS_SCAN_DEPTH niveaux).
 
 use std::{
     fs,

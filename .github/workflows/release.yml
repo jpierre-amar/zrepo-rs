@@ -1,0 +1,210 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  LINUX_DEPS: >-
+    pkg-config
+    libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
+    libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+    libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+    libgl1-mesa-dev libegl1-mesa-dev
+    libgtk-3-dev libdbus-1-dev
+
+jobs:
+  verify:
+    name: Vérifier le tag et la qualité
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Dépendances système et outils de validation
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086 # découpage voulu de la liste
+          sudo apt-get install -y --no-install-recommends $LINUX_DEPS dash desktop-file-utils shellcheck
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable, 2026-10-14
+        with:
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+
+      - name: Le tag appartient à origin/main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          tag_commit=$(git rev-list -n 1 "$GITHUB_REF_NAME")
+          git merge-base --is-ancestor "$tag_commit" origin/main || {
+            echo "::error::Le tag $GITHUB_REF_NAME ne pointe pas sur un commit appartenant à origin/main"
+            exit 1
+          }
+
+      - name: Le tag correspond à la version du workspace
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver=$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml)
+          echo "tag=$tag  Cargo.toml=$ver"
+          [ "$tag" = "$ver" ] || { echo "::error::Le tag v$tag ne correspond pas à la version $ver de Cargo.toml"; exit 1; }
+
+      - name: Qualité Rust et installeurs
+        run: |
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo test --workspace --locked
+          sh -n install/install.sh
+          dash -n install/install.sh
+          shellcheck -s sh install/install.sh
+          desktop-file-validate packaging/zrepo-rs.desktop
+
+      - name: Syntaxe de install.ps1
+        shell: pwsh
+        run: |
+          $errs = $null; $toks = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/install/install.ps1", [ref]$toks, [ref]$errs)
+          if ($errs.Count) { $errs | ForEach-Object { $_.ToString() }; exit 1 }
+
+  build:
+    name: ${{ matrix.target }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu 22.04 : glibc 2.35, binaire compatible avec plus de distributions.
+          - { target: x86_64-unknown-linux-gnu,  os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          # Intel compilé de façon croisée depuis le runner Apple Silicon (SDK universel de Xcode).
+          - { target: x86_64-apple-darwin,       os: macos-latest }
+          - { target: aarch64-apple-darwin,      os: macos-latest }
+          - { target: x86_64-pc-windows-msvc,    os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Dépendances système (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086 # découpage voulu de la liste
+          sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable, 2026-10-14
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Client OAuth présent ?
+        shell: bash
+        env:
+          ZREPO_RS_GITHUB_CLIENT_ID: ${{ secrets.ZREPO_RS_GITHUB_CLIENT_ID }}
+        run: |
+          if [ -z "$ZREPO_RS_GITHUB_CLIENT_ID" ]; then
+            echo "::warning::Secret ZREPO_RS_GITHUB_CLIENT_ID absent : la connexion GitHub par le navigateur sera désactivée dans ce binaire."
+          fi
+
+      - name: Compilation
+        shell: bash
+        env:
+          # Lu à la compilation par option_env!("ZREPO_RS_GITHUB_CLIENT_ID").
+          ZREPO_RS_GITHUB_CLIENT_ID: ${{ secrets.ZREPO_RS_GITHUB_CLIENT_ID }}
+        run: cargo build --release --locked -p zrepo-rs --target ${{ matrix.target }}
+
+      - name: Paquet (Linux, macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="zrepo-rs-${{ matrix.target }}"
+          mkdir -p dist stage
+          cp "target/${{ matrix.target }}/release/zrepo-rs" stage/
+          cp LICENSE stage/
+          if [ "$RUNNER_OS" = macOS ]; then file stage/zrepo-rs; lipo -archs stage/zrepo-rs; fi
+          tar -czf "dist/$name.tar.gz" -C stage zrepo-rs LICENSE
+          cd dist
+          if command -v sha256sum >/dev/null; then sha256sum "$name.tar.gz" > "$name.tar.gz.sha256";
+          else shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"; fi
+          cat "$name.tar.gz.sha256"
+
+      - name: Paquet (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $name = "zrepo-rs-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force dist, stage | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/zrepo-rs.exe" stage/
+          Copy-Item LICENSE stage/
+          Compress-Archive -Path stage/zrepo-rs.exe, stage/LICENSE -DestinationPath "dist/$name.zip" -Force
+          $h = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "dist/$name.zip.sha256" -Value "$h  $name.zip" -Encoding ascii -NoNewline
+          Get-Content "dist/$name.zip.sha256"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publier la release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Installeurs, fichiers d'intégration et SHA256SUMS
+        run: |
+          set -euo pipefail
+          cp install/install.sh install/install.ps1 dist/
+          cp packaging/zrepo-rs.desktop packaging/zrepo-rs.png packaging/zrepo-rs.svg packaging/zrepo-rs.ico packaging/Info.plist.in dist/
+          cd dist
+          for target in \
+            x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu \
+            x86_64-apple-darwin aarch64-apple-darwin; do
+            test -f "zrepo-rs-$target.tar.gz"
+            test -f "zrepo-rs-$target.tar.gz.sha256"
+            sha256sum -c "zrepo-rs-$target.tar.gz.sha256"
+            test "$(tar -tzf "zrepo-rs-$target.tar.gz" | sort)" = "$(printf '%s\n' LICENSE zrepo-rs | sort)"
+          done
+          win=zrepo-rs-x86_64-pc-windows-msvc.zip
+          test -f "$win"
+          test -f "$win.sha256"
+          sha256sum -c "$win.sha256"
+          test "$(unzip -Z1 "$win" | sort)" = "$(printf '%s\n' LICENSE zrepo-rs.exe | sort)"
+          # Ces sommes détectent une corruption après publication. Comme elles sont
+          # cohébergées avec les assets, elles ne remplacent pas une signature de provenance.
+          sha256sum -- * | grep -v ' SHA256SUMS$' > SHA256SUMS
+          ls -la
+          test "$(find . -maxdepth 1 \( -name 'zrepo-rs-*.tar.gz' -o -name 'zrepo-rs-*.zip' \) | wc -l)" -eq 5
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true

@@ -3,7 +3,6 @@
 //! sa machine Herdr ; rien n'est monte ni copie.
 
 use std::{
-    fs,
     process::{Command, Stdio},
     thread,
     time::Duration,
@@ -25,7 +24,7 @@ struct Herdr {
 
 impl Herdr {
     fn cmd(&self) -> Command {
-        let mut c = Command::new("herdr");
+        let mut c = sys::command("herdr");
         if let Some(m) = &self.machine {
             c.args(["--machine", m]);
         }
@@ -51,11 +50,11 @@ impl Herdr {
 }
 
 pub fn server_up() -> bool {
-    sys::output_ok(Command::new("herdr").args(["workspace", "list"])).is_some()
+    sys::output_ok(sys::command("herdr").args(["workspace", "list"])).is_some()
 }
 
 pub fn machine_count() -> usize {
-    sys::output_ok(Command::new("herdr").args(["machine", "list", "--json"]))
+    sys::output_ok(sys::command("herdr").args(["machine", "list", "--json"]))
         .and_then(|o| serde_json::from_slice::<Value>(&o).ok())
         .and_then(|v| v.as_array().map(Vec::len))
         .unwrap_or(0)
@@ -72,7 +71,7 @@ fn text(v: &Value) -> Option<String> {
 /// Les cles REMOTE portent un alias ssh ; Herdr ne connait que les machines
 /// enregistrees (`herdr machine add`).
 fn machine_for_host(host: &str) -> Option<String> {
-    let out = sys::output_ok(Command::new("herdr").args(["machine", "list", "--json"]))?;
+    let out = sys::output_ok(sys::command("herdr").args(["machine", "list", "--json"]))?;
     let v: Value = serde_json::from_slice(&out).ok()?;
     v.as_array()?
         .iter()
@@ -80,7 +79,9 @@ fn machine_for_host(host: &str) -> Option<String> {
         .and_then(|m| text(&m["label"]))
 }
 
+#[cfg(target_os = "linux")]
 fn parent_pid(pid: u32) -> Option<u32> {
+    use std::fs;
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     // Le nom du processus peut contenir des espaces : on lit apres la parenthese.
     stat.rsplit_once(')')?
@@ -92,7 +93,9 @@ fn parent_pid(pid: u32) -> Option<u32> {
 }
 
 /// Clients Herdr (pas le serveur headless), par pid.
+#[cfg(target_os = "linux")]
 fn herdr_client_pids() -> Vec<u32> {
+    use std::fs;
     let Ok(rd) = fs::read_dir("/proc") else {
         return Vec::new();
     };
@@ -110,8 +113,12 @@ fn herdr_client_pids() -> Vec<u32> {
 
 /// Adresse Hyprland de la fenetre qui heberge un client Herdr : on remonte de
 /// chaque client vers un pid connu de Hyprland. Un echec n'est jamais fatal.
+#[cfg(target_os = "linux")]
 fn window_address() -> Option<String> {
-    let out = sys::output_ok(Command::new("hyprctl").args(["clients", "-j"]))?;
+    if !sys::has("hyprctl") {
+        return None;
+    }
+    let out = sys::output_ok(sys::command("hyprctl").args(["clients", "-j"]))?;
     let clients: Value = serde_json::from_slice(&out).ok()?;
     let clients = clients.as_array()?;
     for start in herdr_client_pids() {
@@ -135,35 +142,40 @@ fn window_address() -> Option<String> {
     None
 }
 
-fn launch_window() -> bool {
-    if sys::has("omarchy-launch-terminal-herdr") {
-        sys::spawn_detached("omarchy-launch-terminal-herdr", &[])
-    } else if sys::has("omarchy-launch-tui") {
-        sys::spawn_detached("omarchy-launch-tui", &["herdr"])
+/// Pas de focus de fenetre hors Hyprland.
+#[cfg(not(target_os = "linux"))]
+fn window_address() -> Option<String> {
+    None
+}
+
+/// Les lanceurs Omarchy, s'ils existent ; sinon c'est a l'utilisateur.
+fn launch_window(progress: &dyn Fn(&str)) -> bool {
+    if let Some(bin) = sys::which("omarchy-launch-terminal-herdr") {
+        sys::spawn_detached(&bin, &[])
+    } else if let Some(bin) = sys::which("omarchy-launch-tui") {
+        sys::spawn_detached(&bin, &["herdr"])
     } else {
-        eprintln!(
-            "Aucun lanceur de terminal Omarchy : ouvrez Herdr vous-même (SUPER + CTRL + ENTRÉE)."
-        );
+        progress("Aucun lanceur de terminal connu : ouvrez Herdr vous-même dans un terminal.");
         false
     }
 }
 
 /// Sans client attache, le serveur peut ne pas tourner du tout : la fenetre
 /// est donc ouverte *avant* toute creation, puis on attend que l'API reponde.
-fn ensure_window(cfg: &Config) -> bool {
+fn ensure_window(cfg: &Config, progress: &dyn Fn(&str)) -> bool {
     if let Some(addr) = window_address() {
-        let _ = sys::output_ok(Command::new("hyprctl").args([
+        let _ = sys::output_ok(sys::command("hyprctl").args([
             "dispatch",
             "focuswindow",
             &format!("address:{addr}"),
         ]));
         return true;
     }
-    eprintln!("Ouverture de Herdr...");
-    if !launch_window() {
+    progress("Ouverture de Herdr…");
+    if !launch_window(progress) {
         return false;
     }
-    for _ in 0..cfg.herdr_wait {
+    for _ in 0..cfg.herdr.wait {
         if server_up() {
             return true;
         }
@@ -211,11 +223,11 @@ fn agent_name(h: &Herdr, raw: &str) -> String {
     cand
 }
 
-pub fn open(cfg: &Config, target: &str) -> Res<()> {
+pub fn open(cfg: &Config, target: &str, progress: &dyn Fn(&str)) -> Res<()> {
     if !sys::has("herdr") {
         return Err(Fail::new(EX_DEPS, "herdr introuvable dans le PATH."));
     }
-    let kind = cfg.herdr_agent_kind.as_str();
+    let kind = cfg.herdr.agent.as_str();
 
     let (cwd, machine) = match target.strip_prefix("ssh://") {
         Some(rest) => {
@@ -242,7 +254,7 @@ pub fn open(cfg: &Config, target: &str) -> Res<()> {
 
     // La fenetre d'abord : elle demarre le serveur si besoin. Son absence
     // n'empeche pas la creation, elle la rend seulement visible.
-    ensure_window(cfg);
+    ensure_window(cfg, progress);
 
     // Deja ouvert sur ce dossier : on y retourne plutot que d'empiler un 2e agent.
     let existing = h.json(&["pane", "list"]).and_then(|v| {
@@ -253,12 +265,14 @@ pub fn open(cfg: &Config, target: &str) -> Res<()> {
         })
     });
     if let Some(ws) = existing {
-        println!("{kind} tourne déjà dans {cwd} — retour à l'espace {ws}.");
+        progress(&format!(
+            "{kind} tourne déjà dans {cwd} — retour à l'espace {ws}."
+        ));
         let _ = h.run(&["workspace", "focus", &ws]);
         return Ok(());
     }
 
-    println!("Herdr : nouvel espace « {name} » dans {cwd}");
+    progress(&format!("Herdr : nouvel espace « {name} » dans {cwd}"));
     let (ok, out, err) = h.run(&[
         "workspace",
         "create",
@@ -290,7 +304,7 @@ pub fn open(cfg: &Config, target: &str) -> Res<()> {
     let mut args = vec![
         "agent", "start", &agent, "--kind", kind, "--pane", &pane, "--",
     ];
-    args.extend(cfg.herdr_agent_args.iter().map(String::as_str));
+    args.extend(cfg.herdr.args.iter().map(String::as_str));
     let (ok, out, err) = h.run(&args);
     if !ok {
         return Err(Fail::new(
@@ -302,9 +316,14 @@ pub fn open(cfg: &Config, target: &str) -> Res<()> {
             ),
         ));
     }
-    println!("{} démarré dans {pane} ({agent})", cfg.agent_label());
+    progress(&format!(
+        "{} démarré dans {pane} ({agent})",
+        cfg.agent_label()
+    ));
     if let Some(m) = &h.machine {
-        println!("Machine « {m} » : sélectionnez-la dans la barre latérale de Herdr.");
+        progress(&format!(
+            "Machine « {m} » : sélectionnez-la dans la barre latérale de Herdr."
+        ));
     }
     Ok(())
 }

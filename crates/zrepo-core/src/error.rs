@@ -6,7 +6,7 @@
 pub const EX_OK: i32 = 0;
 pub const EX_FAIL: i32 = 1; // erreur generique
 pub const EX_DEPS: i32 = 2; // dependance manquante
-pub const EX_AUTH: i32 = 3; // gh non authentifie
+pub const EX_AUTH: i32 = 3; // pas de connexion GitHub, ou jeton refuse
 pub const EX_NET: i32 = 4; // GitHub injoignable
 pub const EX_COLLISION: i32 = 6; // dossier occupe par un autre depot
 pub const EX_HERDR: i32 = 7; // Herdr indisponible ou agent non demarre
@@ -28,5 +28,13 @@ impl Fail {
         }
     }
 }
+
+impl std::fmt::Display for Fail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.msg)
+    }
+}
+
+impl std::error::Error for Fail {}
 
 pub type Res<T> = Result<T, Fail>;

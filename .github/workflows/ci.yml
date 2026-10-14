@@ -1,0 +1,165 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Paquets système nécessaires pour compiler eframe/egui (winit X11 + Wayland, OpenGL),
+  # rfd (GTK 3) et keyring (Secret Service via D-Bus). Pas d'OpenSSL : ureq utilise rustls.
+  LINUX_DEPS: >-
+    pkg-config
+    libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
+    libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+    libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+    libgl1-mesa-dev libegl1-mesa-dev
+    libgtk-3-dev libdbus-1-dev
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable, 2026-10-14
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  rust:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Dépendances système (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          # shellcheck disable=SC2086 # découpage voulu de la liste
+          sudo apt-get install -y --no-install-recommends $LINUX_DEPS
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable, 2026-10-14
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: tests
+        run: cargo test --workspace --locked
+
+      - name: build
+        run: cargo build --workspace --locked
+
+  installers:
+    name: installeurs (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Outils de validation des installeurs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends dash desktop-file-utils shellcheck
+
+      - name: Analyse statique de install.sh
+        if: runner.os == 'Linux'
+        run: |
+          sh -n install/install.sh
+          shellcheck -s sh install/install.sh
+          dash -n install/install.sh
+          desktop-file-validate packaging/zrepo-rs.desktop
+
+      - name: install.sh de bout en bout (archive factice, HOME temporaire)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64) t=x86_64-unknown-linux-gnu ;;
+            Linux-aarch64) t=aarch64-unknown-linux-gnu ;;
+            Darwin-x86_64) t=x86_64-apple-darwin ;;
+            Darwin-arm64) t=aarch64-apple-darwin ;;
+          esac
+          w="$RUNNER_TEMP/e2e"; mkdir -p "$w/pkg" "$w/home"
+          # shellcheck disable=SC2016 # le $ est destiné au script factice
+          printf '#!/bin/sh\n[ "$1" = --version ] && { echo "zrepo-rs 0.0.0"; exit 0; }\necho "$*" >> "$HOME/calls.log"\n' > "$w/pkg/zrepo-rs"
+          chmod +x "$w/pkg/zrepo-rs"; cp LICENSE "$w/pkg/"
+          tar -czf "$w/zrepo-rs-$t.tar.gz" -C "$w/pkg" zrepo-rs LICENSE
+          if command -v sha256sum >/dev/null; then (cd "$w" && sha256sum "zrepo-rs-$t.tar.gz" > "zrepo-rs-$t.tar.gz.sha256");
+          else (cd "$w" && shasum -a 256 "zrepo-rs-$t.tar.gz" > "zrepo-rs-$t.tar.gz.sha256"); fi
+          export HOME="$w/home" XDG_DATA_HOME="$w/home/.local/share" WAYLAND_DISPLAY=ci ZREPO_RS_LOCAL_ARCHIVE="$w/zrepo-rs-$t.tar.gz" ZREPO_RS_LOCAL_PACKAGING="$GITHUB_WORKSPACE/packaging"
+          sh install/install.sh --yes --no-setup --dir "$HOME/mon bin"
+          test -x "$HOME/mon bin/zrepo-rs"
+          # La nouvelle application ne doit jamais toucher à l'ancien exécutable zrepo.
+          mkdir -p "$HOME/.local/bin"
+          printf 'ancien-zrepo\n' > "$HOME/.local/bin/zrepo"
+          sh install/install.sh --yes
+          test "$(cat "$HOME/.local/bin/zrepo")" = ancien-zrepo
+          test -x "$HOME/.local/bin/zrepo-rs"
+          grep -qx setup "$HOME/calls.log"
+          if [ "$(uname -s)" = Darwin ]; then
+            test -f "$HOME/Applications/zrepo-rs.app/Contents/Info.plist"
+            plutil -lint "$HOME/Applications/zrepo-rs.app/Contents/Info.plist"
+            ls -la "$HOME/Applications/zrepo-rs.app/Contents/Resources"
+          else
+            desktop-file-validate "$HOME/.local/share/applications/zrepo-rs.desktop"
+            test -f "$HOME/.local/share/icons/hicolor/256x256/apps/zrepo-rs.png"
+          fi
+
+      - name: install.ps1 (analyse et bout en bout avec archive factice)
+        if: runner.os == 'Windows'
+        shell: powershell   # Windows PowerShell 5.1, la cible réelle
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $errs = $null; $toks = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\install\install.ps1", [ref]$toks, [ref]$errs)
+          if ($errs.Count) { $errs | ForEach-Object { $_.ToString() }; exit 1 }
+          $w = Join-Path $env:RUNNER_TEMP 'e2e'
+          New-Item -ItemType Directory -Force "$w\pkg" | Out-Null
+          Copy-Item "$env:WINDIR\System32\whoami.exe" "$w\pkg\zrepo-rs.exe"
+          Copy-Item LICENSE "$w\pkg\"
+          Compress-Archive -Path "$w\pkg\*" -DestinationPath "$w\zrepo-rs.zip" -Force
+          $h = (Get-FileHash "$w\zrepo-rs.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "$w\zrepo-rs.zip.sha256" -Value "$h  zrepo-rs.zip" -Encoding Ascii
+          $env:ZREPO_RS_LOCAL_ARCHIVE = "$w\zrepo-rs.zip"
+          $dir = Join-Path $env:RUNNER_TEMP 'zrepo-rs install'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Set-Content -Path "$dir\zrepo.exe" -Value 'ancien-zrepo' -Encoding Ascii -Force
+          Set-Content -Path "$dir\LICENSE" -Value 'licence-ancien-zrepo' -Encoding Ascii -Force
+          & .\install\install.ps1 -Yes -NoSetup -Dir $dir
+          if (-not (Test-Path "$dir\zrepo-rs.exe")) { throw 'zrepo-rs.exe non installé' }
+          if ((Get-Content "$dir\zrepo.exe" -Raw).Trim() -ne 'ancien-zrepo') { throw 'ancien zrepo modifié' }
+          if ((Get-Content "$dir\LICENSE" -Raw).Trim() -ne 'licence-ancien-zrepo') { throw 'LICENSE de l’ancien zrepo modifiée' }
+          if (-not (Test-Path "$dir\LICENSE-zrepo-rs")) { throw 'LICENSE-zrepo-rs absente' }
+          $p = [Environment]::GetEnvironmentVariable('Path', 'User')
+          if (($p -split ';') -notcontains $dir) { throw "PATH utilisateur non mis à jour : $p" }
+          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'zrepo-rs.lnk'
+          if (-not (Test-Path $lnk)) { throw 'raccourci absent' }
+          & .\install\install.ps1 -Yes -NoSetup -Dir $dir   # idempotence
+          if ((Get-Content "$dir\zrepo.exe" -Raw).Trim() -ne 'ancien-zrepo') { throw 'ancien zrepo modifié après mise à jour' }
+          $n = @(([Environment]::GetEnvironmentVariable('Path', 'User')) -split ';' | Where-Object { $_ -eq $dir }).Count
+          if ($n -ne 1) { throw "entrée PATH dupliquée ($n)" }

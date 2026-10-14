@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=zrepo-rs
+GenericName=Lanceur de projets
+Comment=Ouvrir un projet local, distant ou GitHub dans Zed ou Herdr
+Exec=@ZREPO_RS_BIN@
+TryExec=@ZREPO_RS_BIN@
+Icon=zrepo-rs
+Terminal=false
+Categories=Development;
+Keywords=projet;dépôt;git;github;zed;repo;launcher;
+StartupNotify=false
+StartupWMClass=zrepo-rs

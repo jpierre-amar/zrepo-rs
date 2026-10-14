@@ -1,0 +1,20 @@
+[package]
+name = "zrepo-core"
+description = "Logique de zrepo-rs : sources de projets, configuration, accès GitHub, ouverture"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+base64 = "0.23.1"
+directories = "6.0.0"
+keyring = { version = "3", features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+toml = "1.1.8"
+ureq = { version = "3.4.2", default-features = false, features = ["rustls", "json", "gzip"] }

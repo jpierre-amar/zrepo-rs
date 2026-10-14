@@ -4,7 +4,7 @@
 //! Toutes les lectures de settings.json echouent en silence : un fichier
 //! illisible doit couter les entrees distantes, jamais le launcher entier.
 
-use std::{collections::HashSet, fs, process::Command, thread};
+use std::{collections::HashSet, fs, thread};
 
 use serde_json::Value;
 
@@ -27,7 +27,7 @@ pub enum Settings {
 }
 
 pub fn load(cfg: &Config) -> Settings {
-    let Ok(text) = fs::read_to_string(&cfg.zed_settings) else {
+    let Ok(text) = fs::read_to_string(cfg.zed_settings_path()) else {
         return Settings::Absent;
     };
     let v: Value = match serde_json::from_str(&jsonc::strip(&text)) {
@@ -90,15 +90,16 @@ pub fn settings_entries(conns: &[Conn]) -> Vec<Entry> {
 }
 
 /// Scan git d'un hote. Un serveur eteint est signale par l'appelant, puis ignore.
+/// `sys::output_ok` ferme stdin : ssh ne peut rien demander (BatchMode en plus).
 fn scan_host(cfg: &Config, host: &str, label: &str) -> Option<Vec<Entry>> {
     let script = format!(
         "find \"$HOME\" -mindepth 1 -maxdepth {} -name .git -type d -prune 2>/dev/null | sort",
-        cfg.remote_scan_depth
+        cfg.remote.scan_depth
     );
     let out = sys::output_ok(
-        Command::new("ssh")
+        sys::command("ssh")
             .args(["-o", "BatchMode=yes", "-o"])
-            .arg(format!("ConnectTimeout={}", cfg.remote_ssh_timeout))
+            .arg(format!("ConnectTimeout={}", cfg.remote.ssh_timeout))
             .arg(host)
             .arg(script),
     )?;
@@ -151,6 +152,9 @@ fn read_cache(cfg: &Config) -> Vec<Entry> {
 /// settings.json d'abord, puis le resultat du dernier scan (--refresh), sans doublon.
 pub fn entries(cfg: &Config, refresh: bool) -> (Vec<Entry>, Vec<String>) {
     let mut warnings = Vec::new();
+    if !cfg.remote.enabled {
+        return (Vec::new(), warnings);
+    }
     let conns = match load(cfg) {
         Settings::Loaded(c) => c,
         _ => Vec::new(),
