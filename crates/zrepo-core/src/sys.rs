@@ -263,7 +263,10 @@ pub fn repo_identity(dir: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_remote, parse_git_version, which, write_atomic};
+    use super::{normalize_remote, parse_git_version, which};
+
+    #[cfg(unix)]
+    use super::write_atomic;
 
     #[test]
     fn version_de_git() {
