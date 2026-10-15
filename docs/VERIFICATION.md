@@ -53,8 +53,14 @@ Client ID non vide. La suite compte désormais 38 tests sous Unix.
 
 Avant la première release :
 
-1. Enregistrer l'application OAuth `zrepo-rs` avec Device Flow activé, puis
-   configurer son Client ID selon le README (aucun client secret nécessaire).
+1. ~~Enregistrer l'application OAuth `zrepo-rs` avec Device Flow activé, puis
+   configurer son Client ID selon le README (aucun client secret nécessaire).~~
+   Fait le 15 octobre 2026 (#6) : le secret Actions `ZREPO_RS_GITHUB_CLIENT_ID`
+   est posé ; `POST https://github.com/login/device/code` avec ce Client ID et le
+   scope du code (`repo read:org`) renvoie un `device_code` ; un build release
+   local sous Windows embarque le Client ID et l'assistant (étape 3 « GitHub »)
+   propose « Copier le code et ouvrir github.com ». Le Client ID n'apparaît dans
+   aucun fichier versionné.
 2. Vérifier la CI du commit à publier, puis pousser uniquement le tag `v0.2.0`.
 3. Vérifier les cinq archives publiées et leurs sommes, puis tester l'installation
    réelle avec des chemins HOME/XDG temporaires.
