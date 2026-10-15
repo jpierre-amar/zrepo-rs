@@ -17,9 +17,10 @@ use eframe::egui::{
     StrokeKind, TextEdit, UiBuilder, pos2, vec2,
 };
 use zrepo_core::{
+    apps::{self, EditorConfig},
     auth::{self, DeviceCode, Poll, TokenSource},
     config::Config,
-    open::Target,
+    open::{self, Target},
 };
 
 use super::theme::{self, Pal};
@@ -98,6 +99,14 @@ pub struct Setup {
     pat: String,
     zed: Option<String>,
     herdr: Option<String>,
+    /// Détection coûteuse (PATH, dossiers d'installation) : recalculée
+    /// seulement quand les réglages des cibles changent.
+    terminal: Option<String>,
+    /// Éditeurs connus détectés : (nom, chemin).
+    detected: Vec<(String, String)>,
+    targets: Vec<Target>,
+    editor_name: String,
+    editor_rx: Option<Receiver<Option<PathBuf>>>,
     exe: PathBuf,
     shortcut: Option<Result<hypr::Proposal, String>>,
     applied: Option<Result<Vec<PathBuf>, String>>,
@@ -130,12 +139,18 @@ impl Setup {
             pat: String::new(),
             zed: detect::zed(),
             herdr: detect::herdr(),
+            terminal: None,
+            detected: Vec::new(),
+            targets: Vec::new(),
+            editor_name: String::new(),
+            editor_rx: None,
             exe,
             shortcut: None,
             applied: None,
             saved: None,
             logo: None,
         };
+        s.refresh_targets();
         s.check_github(ctx);
         // Débogage (captures d'écran) : ouvrir directement l'étape n (1 à 6).
         if let Some(n) = std::env::var("ZREPO_RS_DEBUG_SETUP_STEP")
@@ -161,6 +176,9 @@ impl Setup {
         if step == Step::Shortcut && self.shortcut.is_none() && hypr::running() {
             self.shortcut = Some(hypr::propose(&self.exe));
         }
+        if step == Step::Targets {
+            self.refresh_targets();
+        }
         if step == Step::Done {
             self.save();
         }
@@ -185,6 +203,62 @@ impl Setup {
 
     fn save(&mut self) {
         self.saved = Some(self.cfg.save().map(|()| Config::path()).map_err(|f| f.msg));
+    }
+
+    /// Cibles disponibles d'après les réglages courants ; la cible par défaut
+    /// est ramenée sur l'une d'elles.
+    fn refresh_targets(&mut self) {
+        self.terminal = apps::terminal(&self.cfg).map(|t| t.program.display().to_string());
+        let mine = &self.cfg.editors;
+        self.detected = apps::editors(&self.cfg)
+            .into_iter()
+            .filter(|a| !mine.iter().any(|e| e.name == a.name))
+            .map(|a| (a.name, a.program.display().to_string()))
+            .collect();
+        self.targets = open::available_targets(&self.cfg);
+        self.cfg.ui.default_target = open::pick_target(&self.cfg.ui.default_target, &self.targets);
+    }
+
+    /// Sélecteur de l'exécutable d'un éditeur, comme `pick_folder`.
+    fn pick_editor(&mut self) {
+        let dialog = || {
+            let mut d = rfd::FileDialog::new().set_title("Exécutable de l'éditeur");
+            if cfg!(windows) {
+                d = d.add_filter("Programmes", &["exe", "cmd", "bat"]);
+            }
+            d
+        };
+        let (tx, rx) = mpsc::channel();
+        if cfg!(target_os = "macos") {
+            let _ = tx.send(dialog().pick_file());
+        } else {
+            let d = dialog();
+            thread::spawn(move || {
+                let _ = tx.send(d.pick_file());
+            });
+        }
+        self.editor_rx = Some(rx);
+    }
+
+    fn add_editor(&mut self, program: PathBuf) {
+        let typed = self.editor_name.trim();
+        let name = if typed.is_empty() {
+            program
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Éditeur".into())
+        } else {
+            typed.to_string()
+        };
+        self.cfg.editors.retain(|e| e.name != name);
+        self.cfg.editors.push(EditorConfig {
+            name: name.clone(),
+            command: program.display().to_string(),
+            args: Vec::new(),
+        });
+        self.editor_name.clear();
+        self.refresh_targets();
+        self.cfg.ui.default_target = Target::App(name);
     }
 
     // ---------- GitHub (threads) ----------
@@ -367,6 +441,14 @@ impl Setup {
                 self.confirm_create = false;
             }
         }
+        if let Some(rx) = &self.editor_rx
+            && let Ok(r) = rx.try_recv()
+        {
+            self.editor_rx = None;
+            if let Some(p) = r {
+                self.add_editor(p);
+            }
+        }
     }
 
     // ---------- Interface ----------
@@ -378,6 +460,7 @@ impl Setup {
             self.gh,
             Gh::Checking | Gh::Starting | Gh::Waiting(_) | Gh::Verifying
         ) || self.pick_rx.is_some()
+            || self.editor_rx.is_some()
         {
             ctx.request_repaint_after(Duration::from_millis(150));
         }
@@ -965,7 +1048,7 @@ impl Setup {
                 pal,
                 "Zed",
                 self.zed.as_deref(),
-                "introuvable : installez Zed depuis zed.dev",
+                "introuvable (facultatif) : zed.dev",
             );
             ui.add_space(6.0);
             let herdr_missing = if cfg!(windows) {
@@ -974,24 +1057,32 @@ impl Setup {
                 "introuvable (facultatif)"
             };
             tool_row(ui, pal, "Herdr", self.herdr.as_deref(), herdr_missing);
+            ui.add_space(6.0);
+            tool_row(
+                ui,
+                pal,
+                "Terminal",
+                self.terminal.as_deref(),
+                "introuvable : à indiquer dans config.toml, section [terminal]",
+            );
+            for (name, path) in &self.detected {
+                ui.add_space(6.0);
+                tool_row(ui, pal, name, Some(path.as_str()), "");
+            }
         });
         ui.add_space(14.0);
         ui.spacing_mut().interact_size.y = 24.0;
         ui.spacing_mut().item_spacing.y = 8.0;
-        let herdr_ok = self.herdr.is_some();
-        let agent = self.cfg.agent_label();
+        self.my_editors_ui(ui, pal);
+        ui.add_space(12.0);
         ui.label(RichText::new("Cible par défaut").size(13.5).color(pal.text));
         ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut self.cfg.ui.default_target, Target::Zed, "Zed");
-            ui.add_space(16.0);
-            ui.add_enabled_ui(herdr_ok && self.cfg.herdr.enabled, |ui| {
-                ui.radio_value(
-                    &mut self.cfg.ui.default_target,
-                    Target::Herdr,
-                    format!("Herdr + {agent}"),
-                );
-            });
+        ui.horizontal_wrapped(|ui| {
+            for t in self.targets.clone() {
+                let label = t.label(&self.cfg);
+                ui.radio_value(&mut self.cfg.ui.default_target, t, label);
+                ui.add_space(10.0);
+            }
         });
         ui.add_space(12.0);
         ui.label(
@@ -1000,14 +1091,18 @@ impl Setup {
                 .color(pal.text),
         );
         ui.add_space(2.0);
-        ui.add_enabled_ui(!cfg!(windows), |ui| {
-            ui.checkbox(
-                &mut self.cfg.herdr.enabled,
-                format!("Proposer Herdr + {agent} quand il est installé"),
-            );
-        });
-        if !self.cfg.herdr.enabled || !herdr_ok {
-            self.cfg.ui.default_target = Target::Zed;
+        let agent = self.cfg.agent_label();
+        let herdr_toggled = ui
+            .add_enabled_ui(!cfg!(windows), |ui| {
+                ui.checkbox(
+                    &mut self.cfg.herdr.enabled,
+                    format!("Proposer Herdr + {agent} quand il est installé"),
+                )
+            })
+            .inner
+            .changed();
+        if herdr_toggled {
+            self.refresh_targets();
         }
         ui.checkbox(&mut self.cfg.github.enabled, "Afficher mes dépôts GitHub");
         ui.checkbox(
@@ -1019,6 +1114,60 @@ impl Setup {
                 "Lu dans {}",
                 tilde_path(&self.cfg.zed_settings_path())
             ))
+            .size(12.0)
+            .color(pal.faint),
+        );
+    }
+
+    /// Éditeurs ajoutés à la main : n'importe quel exécutable, qui reçoit le
+    /// dossier du projet en dernier argument.
+    fn my_editors_ui(&mut self, ui: &mut egui::Ui, pal: &Pal) {
+        ui.label(RichText::new("Mes éditeurs").size(13.5).color(pal.text));
+        ui.add_space(2.0);
+        let mut remove = None;
+        for (i, e) in self.cfg.editors.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&e.name).size(14.0).color(pal.text));
+                ui.add_space(6.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(tilde_path(Path::new(&e.command)))
+                            .size(12.5)
+                            .color(pal.weak),
+                    )
+                    .truncate(),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if theme::button(ui, "Retirer", false).clicked() {
+                        remove = Some(i);
+                    }
+                });
+            });
+        }
+        if let Some(i) = remove {
+            self.cfg.editors.remove(i);
+            self.refresh_targets();
+        }
+        ui.horizontal(|ui| {
+            ui.add(
+                TextEdit::singleline(&mut self.editor_name)
+                    .hint_text("Nom (facultatif)")
+                    .desired_width(180.0),
+            );
+            let busy = self.editor_rx.is_some();
+            if ui
+                .add_enabled_ui(!busy, |ui| theme::button(ui, "Ajouter un éditeur…", false))
+                .inner
+                .clicked()
+            {
+                self.pick_editor();
+            }
+        });
+        ui.label(
+            RichText::new(
+                "Choisissez l'exécutable de votre éditeur ou IDE : il recevra le dossier du \
+                 projet. Options avancées : section [[editors]] de config.toml.",
+            )
             .size(12.0)
             .color(pal.faint),
         );

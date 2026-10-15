@@ -14,6 +14,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    apps::{EditorConfig, TerminalConfig},
     error::{EX_FAIL, Fail, Res},
     open::Target,
     sys,
@@ -29,6 +30,10 @@ pub struct Config {
     pub remote: RemoteConfig,
     pub herdr: HerdrConfig,
     pub ui: UiConfig,
+    pub terminal: TerminalConfig,
+    /// Editeurs ajoutes a la main (`[[editors]]`), en plus de ceux detectes.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub editors: Vec<EditorConfig>,
 
     /// Cache des depots GitHub (resolu, jamais ecrit dans le fichier).
     #[serde(skip)]
@@ -120,6 +125,8 @@ impl Default for Config {
             remote: RemoteConfig::default(),
             herdr: HerdrConfig::default(),
             ui: UiConfig::default(),
+            terminal: TerminalConfig::default(),
+            editors: Vec::new(),
             cache_file: cache.join("repos.tsv"),
             remote_cache_file: cache.join("remotes.tsv"),
         }
@@ -308,15 +315,49 @@ default_target = "herdr"
         assert_eq!(back.projects_dir, cfg.projects_dir);
         assert_eq!(back.herdr.args, cfg.herdr.args);
         assert_eq!(back.ui.default_target, Target::Zed);
+        assert!(!text.contains("editors"));
     }
 
+    /// Une cible inconnue n'est pas une erreur : ce peut etre un editeur
+    /// declare plus loin ou desinstalle depuis. Le lanceur se rabat alors
+    /// sur une cible disponible.
     #[test]
-    fn champ_inconnu_tolere_cible_invalide_refusee() {
+    fn champ_inconnu_et_cible_libre_toleres() {
         assert!(
             Config::parse("futur = 1\n[github]\nenabled = false\n")
                 .is_ok_and(|c| !c.github.enabled)
         );
-        assert!(Config::parse("[ui]\ndefault_target = \"vim\"\n").is_err());
+        let cfg = Config::parse("[ui]\ndefault_target = \"vim\"\n").unwrap();
+        assert_eq!(cfg.ui.default_target, Target::App("vim".into()));
+    }
+
+    #[test]
+    fn editeurs_et_terminal() {
+        let cfg = Config::parse(
+            r#"
+[ui]
+default_target = "terminal"
+[terminal]
+command = "kitty"
+args = ["--directory", "{path}"]
+[[editors]]
+name = "Mon IDE"
+command = "C:/outils/ide.exe"
+args = ["--open", "{path}"]
+[[editors]]
+name = "Vim"
+command = "gvim"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.ui.default_target, Target::Terminal);
+        assert_eq!(cfg.terminal.command, "kitty");
+        assert_eq!(cfg.editors.len(), 2);
+        assert_eq!(cfg.editors[0].args, vec!["--open", "{path}"]);
+        assert!(cfg.editors[1].args.is_empty());
+        let back = Config::parse(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
+        assert_eq!(back.editors, cfg.editors);
+        assert_eq!(back.terminal, cfg.terminal);
     }
 
     #[test]

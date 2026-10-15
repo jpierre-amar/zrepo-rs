@@ -10,24 +10,28 @@ use zrepo_core::{
 };
 
 pub const USAGE: &str = "\
-zrepo-rs — ouvrir un projet dans Zed ou dans Herdr
+zrepo-rs — ouvrir un projet dans Zed, Herdr, un terminal ou votre éditeur
 
   zrepo-rs                       fenêtre de lancement (assistant au premier lancement)
   zrepo-rs setup                 assistant de configuration (dossier, GitHub, cibles, raccourci)
   zrepo-rs list [--refresh]      liste TSV des projets (locaux, distants, GitHub)
-  zrepo-rs open <clé> [--with zed|herdr]
+  zrepo-rs open <clé> [--with <cible>]
                               ouvre un projet sans fenêtre (clone si besoin)
-  zrepo-rs doctor                vérifie les dépendances et la connexion GitHub
+  zrepo-rs doctor                vérifie les dépendances, les cibles et la connexion GitHub
   zrepo-rs --version | --help
 
 Clés : chemin absolu (projet local), owner/repo (GitHub), ssh://hôte/chemin (distant).
-`--with codex` reste accepté comme synonyme de `--with herdr`.
+Cibles : zed, herdr, terminal, ou un éditeur (vscode, cursor, windsurf, sublime,
+idea, pycharm, webstorm, phpstorm, rustrover, ou le nom d'un éditeur ajouté).
+Sans --with : la cible par défaut. `--with codex` équivaut à `--with herdr`.
+Les projets distants (ssh://) s'ouvrent dans Zed ou dans Herdr.
 Options de la fenêtre : --refresh (réinterroge GitHub et rescanne les serveurs),
 --codex (Herdr comme cible par défaut).
 
 Dans la fenêtre :
   Entrée      ouvre dans la cible affichée      Tab     change de cible
   Ctrl-E      ouvre dans Zed                    Ctrl-Y  ouvre dans Herdr
+  Ctrl-T      ouvre un terminal dans le dossier
   ↑ ↓ PgUp PgDn  naviguent                      Ctrl-R  rafraîchit
   Ctrl-1…4    filtres Tous, Locaux, Serveurs, GitHub
   Ctrl-,      réglages                          Échap   ferme
@@ -46,7 +50,8 @@ pub enum Command {
     },
     Open {
         key: String,
-        target: Target,
+        /// None = cible par défaut de la configuration.
+        target: Option<Target>,
     },
     Doctor,
     Help,
@@ -108,16 +113,16 @@ fn parse_open(args: &[String]) -> Res<Command> {
     let usage = || {
         Fail::new(
             EX_FAIL,
-            "Usage : zrepo-rs open <chemin|owner/repo|ssh://...> [--with zed|herdr]",
+            "Usage : zrepo-rs open <chemin|owner/repo|ssh://...> [--with <cible>]",
         )
     };
     let mut key: Option<&str> = None;
-    let mut with = "zed";
+    let mut with: Option<&str> = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--with" => with = it.next().map(String::as_str).ok_or_else(usage)?,
-            s if s.starts_with("--with=") => with = &s["--with=".len()..],
+            "--with" => with = Some(it.next().map(String::as_str).ok_or_else(usage)?),
+            s if s.starts_with("--with=") => with = Some(&s["--with=".len()..]),
             "--" => {}
             s if s.starts_with('-') => {
                 return Err(Fail::new(EX_FAIL, format!("Option inconnue : {s}")));
@@ -132,15 +137,12 @@ fn parse_open(args: &[String]) -> Res<Command> {
         }
     }
     let key = key.ok_or_else(usage)?;
-    let target = Target::parse(with).ok_or_else(|| {
-        Fail::new(
-            EX_FAIL,
-            format!("Cible inconnue : {with} (attendu : zed ou herdr)"),
-        )
-    })?;
+    if with.is_some_and(|w| w.trim().is_empty()) {
+        return Err(usage());
+    }
     Ok(Command::Open {
         key: key.into(),
-        target,
+        target: with.map(Target::parse),
     })
 }
 
@@ -161,8 +163,11 @@ pub fn list(refresh: bool) -> Res<()> {
 
 /// Comme la v1 : le résultat de l'ouverture sur stdout (scripts), les étapes
 /// intermédiaires (clonage, notes, attente de Herdr) sur stderr.
-pub fn open(key: &str, target: Target) -> Res<()> {
+pub fn open(key: &str, target: Option<Target>) -> Res<()> {
     let cfg = Config::load()?;
+    let target = target.unwrap_or_else(|| {
+        open::pick_target(&cfg.ui.default_target, &open::available_targets(&cfg))
+    });
     open::open(&cfg, key, target, &|msg| {
         if is_final(msg) {
             println!("{msg}");
@@ -174,7 +179,7 @@ pub fn open(key: &str, target: Target) -> Res<()> {
 
 /// Messages de `zrepo_core::open` qui annoncent le résultat.
 fn is_final(msg: &str) -> bool {
-    msg.starts_with("Ouverture dans Zed : ")
+    msg.starts_with("Ouverture dans ")
         || msg.starts_with("Herdr : ")
         || msg.starts_with("Machine « ")
         || msg.contains(" tourne déjà dans ")
@@ -231,6 +236,7 @@ mod tests {
     #[test]
     fn sortie_de_open() {
         assert!(is_final("Ouverture dans Zed : /p"));
+        assert!(is_final("Ouverture dans VS Code : /p"));
         assert!(is_final("Herdr : nouvel espace « p » dans /p"));
         assert!(is_final("codex --yolo démarré dans w1:p1 (p-codex)"));
         assert!(!is_final("Clonage de o/r…"));
@@ -247,26 +253,34 @@ mod tests {
             p(&["open", "o/r"]).unwrap(),
             Command::Open {
                 key: "o/r".into(),
-                target: Target::Zed
+                target: None
             }
         );
         assert_eq!(
             p(&["open", "--with", "codex", "/p"]).unwrap(),
             Command::Open {
                 key: "/p".into(),
-                target: Target::Herdr
+                target: Some(Target::Herdr)
             }
         );
         assert_eq!(
-            p(&["open", "--with=herdr", "--", "/p"]).unwrap(),
+            p(&["open", "--with=terminal", "--", "/p"]).unwrap(),
             Command::Open {
                 key: "/p".into(),
-                target: Target::Herdr
+                target: Some(Target::Terminal)
+            }
+        );
+        // Un éditeur : sa présence n'est vérifiée qu'à l'ouverture.
+        assert_eq!(
+            p(&["open", "a", "--with", "vscode"]).unwrap(),
+            Command::Open {
+                key: "a".into(),
+                target: Some(Target::App("vscode".into()))
             }
         );
         assert!(p(&["open"]).is_err());
         assert!(p(&["open", "a", "b"]).is_err());
-        assert!(p(&["open", "a", "--with", "vim"]).is_err());
         assert!(p(&["open", "a", "--with"]).is_err());
+        assert!(p(&["open", "a", "--with="]).is_err());
     }
 }

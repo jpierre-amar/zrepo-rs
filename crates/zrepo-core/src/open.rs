@@ -1,5 +1,5 @@
 //! Ouverture d'un projet : resolution de la cle (clonage si besoin), puis
-//! Zed ou Herdr.
+//! Zed, Herdr, un terminal ou un editeur (voir `apps`).
 
 use std::{
     fs, io,
@@ -11,72 +11,158 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    auth,
+    apps, auth,
     config::Config,
     error::{EX_COLLISION, EX_DEPS, EX_FAIL, Fail, Res},
     sys,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// Ecrite dans config.toml comme une simple chaine : "zed", "herdr",
+/// "terminal", ou l'id d'un editeur ("vscode", "Mon IDE"...).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
 pub enum Target {
     Zed,
     /// Herdr + l'agent configure (codex --yolo par defaut).
-    #[serde(alias = "codex")]
     Herdr,
+    /// Un terminal ouvert dans le dossier du projet.
+    Terminal,
+    /// Un editeur detecte ou declare dans config.toml, par son id.
+    App(String),
+}
+
+impl From<String> for Target {
+    fn from(s: String) -> Self {
+        Target::parse(&s)
+    }
+}
+
+impl From<Target> for String {
+    fn from(t: Target) -> Self {
+        t.id().to_string()
+    }
 }
 
 impl Target {
-    /// `codex` reste accepte : c'etait le nom de la cible en v1.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "zed" => Some(Target::Zed),
-            "herdr" | "codex" => Some(Target::Herdr),
-            _ => None,
+    /// `codex` reste accepte : c'etait le nom de la cible en v1. Tout autre
+    /// nom designe un editeur ; sa presence est verifiee a l'ouverture.
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_lowercase().as_str() {
+            "zed" => Target::Zed,
+            "herdr" | "codex" => Target::Herdr,
+            "terminal" => Target::Terminal,
+            _ => Target::App(s.trim().to_string()),
         }
     }
 
-    pub fn as_str(self) -> &'static str {
+    pub fn id(&self) -> &str {
         match self {
             Target::Zed => "zed",
             Target::Herdr => "herdr",
+            Target::Terminal => "terminal",
+            Target::App(id) => id,
         }
     }
 
-    /// « Zed » ou « Herdr + codex --yolo ».
-    pub fn label(self, cfg: &Config) -> String {
+    /// « Zed », « Herdr + codex --yolo », « Terminal », « VS Code »...
+    pub fn label(&self, cfg: &Config) -> String {
         match self {
             Target::Zed => "Zed".into(),
             Target::Herdr => format!("Herdr + {}", cfg.agent_label()),
+            Target::Terminal => "Terminal".into(),
+            Target::App(id) => apps::editor_name(cfg, id).unwrap_or_else(|| id.clone()),
         }
     }
 }
 
-/// Zed toujours (son absence est signalee a l'ouverture, projet pret) ;
-/// Herdr seulement s'il est active, installe, et hors Windows.
+/// Cibles installees, dans l'ordre d'affichage. Herdr seulement s'il est
+/// active, installe, et hors Windows. Jamais vide : sans rien de detecte,
+/// Zed reste propose (son absence est signalee a l'ouverture, projet pret).
 pub fn available_targets(cfg: &Config) -> Vec<Target> {
-    let mut t = vec![Target::Zed];
+    let mut t = Vec::new();
+    if sys::zed_launcher().is_some() {
+        t.push(Target::Zed);
+    }
     if cfg!(not(windows)) && cfg.herdr.enabled && sys::has("herdr") {
         t.push(Target::Herdr);
+    }
+    if apps::terminal(cfg).is_some() {
+        t.push(Target::Terminal);
+    }
+    t.extend(apps::editors(cfg).into_iter().map(|a| Target::App(a.id)));
+    if t.is_empty() {
+        t.push(Target::Zed);
     }
     t
 }
 
 /// Resout (clone si besoin) puis ouvre. `progress` recoit les messages
-/// d'etape. Le clonage a lieu avant de savoir dans quoi on ouvre : les deux
+/// d'etape. Le clonage a lieu avant de savoir dans quoi on ouvre : toutes les
 /// cibles veulent le meme dossier pret sur disque.
 pub fn open(cfg: &Config, key: &str, target: Target, progress: &dyn Fn(&str)) -> Res<()> {
+    enum How {
+        Zed,
+        Herdr,
+        App(apps::App),
+    }
+    // Terminal et editeurs : verifies avant de cloner, une cible absente
+    // n'a pas a declencher un clonage.
+    let how = match &target {
+        Target::Zed => How::Zed,
+        Target::Herdr => How::Herdr,
+        Target::Terminal => How::App(apps::terminal(cfg).ok_or_else(|| {
+            Fail::new(
+                EX_DEPS,
+                "Aucun terminal trouvé. Indiquez-en un dans config.toml, section [terminal].",
+            )
+        })?),
+        Target::App(id) => How::App(apps::find_editor(cfg, id).ok_or_else(|| {
+            Fail::new(
+                EX_DEPS,
+                format!(
+                    "Éditeur introuvable : {id}.\nCibles disponibles : {}",
+                    ids(cfg)
+                ),
+            )
+        })?),
+    };
+    if matches!(how, How::App(_)) && key.starts_with("ssh://") {
+        return Err(Fail::new(
+            EX_FAIL,
+            format!("Un projet distant s'ouvre dans Zed ou dans Herdr.\nAdresse : {key}"),
+        ));
+    }
     let resolved = resolve_target(cfg, key, progress)?;
-    match target {
-        Target::Zed => open_in_zed(&resolved, progress),
+    match how {
+        How::App(app) => apps::launch(&app, &resolved, progress),
+        How::Zed => open_in_zed(&resolved, progress),
         #[cfg(not(windows))]
-        Target::Herdr => crate::herdr::open(cfg, &resolved, progress),
+        How::Herdr => crate::herdr::open(cfg, &resolved, progress),
         #[cfg(windows)]
-        Target::Herdr => Err(Fail::new(
+        How::Herdr => Err(Fail::new(
             crate::error::EX_HERDR,
             "Herdr n'est pas disponible sous Windows.",
         )),
     }
+}
+
+/// `want` s'il fait partie des cibles disponibles, sinon la premiere d'entre
+/// elles (un editeur desinstalle ne bloque pas le lanceur).
+pub fn pick_target(want: &Target, targets: &[Target]) -> Target {
+    if targets.contains(want) {
+        want.clone()
+    } else {
+        targets.first().cloned().unwrap_or(Target::Zed)
+    }
+}
+
+/// « zed, terminal, vscode » : pour les messages d'erreur.
+fn ids(cfg: &Config) -> String {
+    available_targets(cfg)
+        .iter()
+        .map(Target::id)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn open_in_zed(target: &str, progress: &dyn Fn(&str)) -> Res<()> {
@@ -313,11 +399,34 @@ mod tests {
 
     #[test]
     fn cibles() {
-        assert_eq!(Target::parse("codex"), Some(Target::Herdr));
-        assert_eq!(Target::parse("herdr"), Some(Target::Herdr));
-        assert_eq!(Target::parse("zed"), Some(Target::Zed));
-        assert_eq!(Target::parse("vim"), None);
-        assert!(available_targets(&Config::default()).contains(&Target::Zed));
+        assert_eq!(Target::parse("codex"), Target::Herdr);
+        assert_eq!(Target::parse("herdr"), Target::Herdr);
+        assert_eq!(Target::parse("Zed"), Target::Zed);
+        assert_eq!(Target::parse("terminal"), Target::Terminal);
+        assert_eq!(Target::parse(" Mon IDE "), Target::App("Mon IDE".into()));
+        assert_eq!(Target::App("vscode".into()).id(), "vscode");
+        let cfg = Config::default();
+        assert_eq!(Target::App("vscode".into()).label(&cfg), "VS Code");
+        assert_eq!(Target::App("vim".into()).label(&cfg), "vim");
+        assert!(!available_targets(&cfg).is_empty());
+    }
+
+    #[test]
+    fn cible_absente_ne_clone_pas() {
+        let cfg = Config {
+            projects_dir: std::env::temp_dir().join("zrepo-rs-test-ne-pas-creer"),
+            ..Config::default()
+        };
+        let r = open(&cfg, "o/r", Target::App("zrepo-rs-absent".into()), &|_| {});
+        assert_eq!(r.unwrap_err().code, EX_DEPS);
+        assert!(!cfg.projects_dir.exists());
+        let r = open(
+            &cfg,
+            "ssh://h/p",
+            Target::App("zrepo-rs-absent".into()),
+            &|_| {},
+        );
+        assert_eq!(r.unwrap_err().code, EX_DEPS);
     }
 
     #[test]

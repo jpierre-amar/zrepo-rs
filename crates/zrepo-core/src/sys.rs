@@ -129,10 +129,15 @@ pub fn zed_launcher() -> Option<ZedLauncher> {
 }
 
 /// Lance un programme detache du lanceur, pour que sa fermeture ne le tue pas.
+pub fn spawn_detached(bin: &Path, args: &[&str]) -> bool {
+    spawn_detached_in(bin, args, None)
+}
+
+/// Comme `spawn_detached`, dans le dossier `dir` s'il est donne.
 /// `setsid -f` rend la main des le fork : il ne peut pas signaler un exec rate,
 /// c'est a l'appelant de verifier avant que le binaire existe.
 #[cfg(target_os = "linux")]
-pub fn spawn_detached(bin: &Path, args: &[&str]) -> bool {
+pub fn spawn_detached_in(bin: &Path, args: &[&str], dir: Option<&Path>) -> bool {
     let setsid = has("setsid");
     let mut cmd = if setsid {
         let mut c = Command::new("setsid");
@@ -141,6 +146,9 @@ pub fn spawn_detached(bin: &Path, args: &[&str]) -> bool {
     } else {
         Command::new(bin)
     };
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
     cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -153,9 +161,12 @@ pub fn spawn_detached(bin: &Path, args: &[&str]) -> bool {
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]
-pub fn spawn_detached(bin: &Path, args: &[&str]) -> bool {
-    Command::new(bin)
-        .args(args)
+pub fn spawn_detached_in(bin: &Path, args: &[&str], dir: Option<&Path>) -> bool {
+    let mut cmd = Command::new(bin);
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -164,14 +175,30 @@ pub fn spawn_detached(bin: &Path, args: &[&str]) -> bool {
 }
 
 #[cfg(windows)]
-pub fn spawn_detached(bin: &Path, args: &[&str]) -> bool {
+pub fn spawn_detached_in(bin: &Path, args: &[&str], dir: Option<&Path>) -> bool {
     use std::os::windows::process::CommandExt;
-    Command::new(bin)
-        .args(args)
+    let mut cmd = Command::new(bin);
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    cmd.args(args)
         .creation_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+/// Windows : programme console (PowerShell...) dans sa propre fenetre.
+#[cfg(windows)]
+pub fn spawn_console(bin: &Path, args: &[&str], dir: &Path) -> bool {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    Command::new(bin)
+        .args(args)
+        .current_dir(dir)
+        .creation_flags(CREATE_NEW_CONSOLE)
         .spawn()
         .is_ok()
 }
