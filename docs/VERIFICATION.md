@@ -66,6 +66,28 @@ Avant la première release :
    réelle avec des chemins HOME/XDG temporaires.
 4. Valider manuellement le Device Flow et l'ouverture d'un projet dans l'éditeur.
 
+## Release v0.2.0
+
+Publiée le 15 octobre 2026 depuis le tag `v0.2.0` (commit `6eb3aca`, CI verte :
+[run 38740023944](https://github.com/jpierre-amar/zrepo-rs/actions/runs/38740023944)).
+
+| Contrôle | Résultat |
+|---|---|
+| [Run `release.yml` 38749253992](https://github.com/jpierre-amar/zrepo-rs/actions/runs/38749253992) | `success` : verify, 5 builds, publication |
+| Avertissement « Secret ZREPO_RS_GITHUB_CLIENT_ID absent » | aucun (annotations des 7 jobs vides sur ce point) |
+| Statut de la release | ni brouillon ni pré-release, « Latest » |
+| Assets | 18 : 5 archives, 5 `.sha256`, `SHA256SUMS`, `install.sh`, `install.ps1`, `zrepo-rs.desktop`, `.png`, `.svg`, `.ico`, `Info.plist.in` |
+| `sha256sum -c SHA256SUMS` et les 5 `.sha256` | OK pour tous les fichiers |
+| Client ID dans les binaires | présent dans les 5 archives |
+| Binaire Windows publié (`x86_64-pc-windows-msvc`) | `--version` → `zrepo-rs 0.2.0`, code 0 |
+| Installation isolée Linux et SHA-256 de l'ancien `zrepo` | **à faire** sur le poste Linux (issue #7, étapes 6 et 7) |
+
+`install.ps1` n'est pas isolable comme `install.sh` : même avec `-Dir`, il
+ajoute le dossier au `PATH` utilisateur (`HKCU\Environment`) et crée un
+raccourci dans le menu Démarrer. Le binaire Windows a donc été testé directement
+depuis l'archive ; l'installeur est couvert par le job CI
+`installeurs (windows-latest)`.
+
 ## Sécurité
 
 - Le jeton GitHub est stocké sous le service de trousseau `zrepo-rs`.
