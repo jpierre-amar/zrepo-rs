@@ -1,6 +1,6 @@
 [package]
 name = "zrepo-rs"
-description = "Lanceur de projets : ouvre un projet local, distant ou GitHub dans Zed ou Herdr"
+description = "Lanceur de projets : ouvre un projet local, distant ou GitHub dans un terminal, votre éditeur, Zed ou Herdr"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

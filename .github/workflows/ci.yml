@@ -163,3 +163,43 @@ jobs:
           if ((Get-Content "$dir\zrepo.exe" -Raw).Trim() -ne 'ancien-zrepo') { throw 'ancien zrepo modifié après mise à jour' }
           $n = @(([Environment]::GetEnvironmentVariable('Path', 'User')) -split ';' | Where-Object { $_ -eq $dir }).Count
           if ($n -ne 1) { throw "entrée PATH dupliquée ($n)" }
+
+      - name: Setup .exe (Inno Setup, installation et désinstallation silencieuses)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y; if ($LASTEXITCODE) { exit 1 } }
+          $fake = Join-Path $env:RUNNER_TEMP 'fake-zrepo-rs.exe'
+          Copy-Item "$env:WINDIR\System32\whoami.exe" $fake
+          & $iscc /Q /DAppVersion=0.0.0-ci "/DSourceExe=$fake" packaging\windows\zrepo-rs.iss
+          if ($LASTEXITCODE) { throw "ISCC a échoué ($LASTEXITCODE)" }
+          $setup = 'dist\zrepo-rs-setup-x86_64.exe'
+          if (-not (Test-Path $setup)) { throw 'setup absent' }
+          $dir = Join-Path $env:RUNNER_TEMP 'zrepo-rs setup'
+          # Laissé par l'étape install.ps1 : le setup doit le recréer lui-même.
+          $lnk = Join-Path ([Environment]::GetFolderPath('Programs')) 'zrepo-rs.lnk'
+          Remove-Item $lnk -Force -ErrorAction SilentlyContinue
+          $p = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS=addtopath', "/DIR=`"$dir`"" -Wait -PassThru
+          if ($p.ExitCode) { throw "installation : code $($p.ExitCode)" }
+          if (-not (Test-Path "$dir\zrepo-rs.exe")) { throw 'zrepo-rs.exe non installé' }
+          if (-not (Test-Path "$dir\LICENSE-zrepo-rs")) { throw 'LICENSE-zrepo-rs absente' }
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          if (($userPath -split ';') -notcontains $dir) { throw "PATH utilisateur non mis à jour : $userPath" }
+          if (-not (Test-Path $lnk)) { throw 'raccourci absent' }
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{C934C8B8-C267-4E05-8A64-E3FF08C97084}_is1'
+          if (-not (Test-Path $key)) { throw 'entrée de désinstallation absente' }
+          $p = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/TASKS=addtopath', "/DIR=`"$dir`"" -Wait -PassThru
+          if ($p.ExitCode) { throw "réinstallation : code $($p.ExitCode)" }
+          $n = @(([Environment]::GetEnvironmentVariable('Path', 'User')) -split ';' | Where-Object { $_ -eq $dir }).Count
+          if ($n -ne 1) { throw "entrée PATH dupliquée ($n)" }
+          $p = Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($p.ExitCode) { throw "désinstallation : code $($p.ExitCode)" }
+          # Le désinstalleur finit dans une copie temporaire de lui-même.
+          for ($i = 0; $i -lt 60 -and (Test-Path "$dir\zrepo-rs.exe"); $i++) { Start-Sleep -Milliseconds 500 }
+          if (Test-Path "$dir\zrepo-rs.exe") { throw 'zrepo-rs.exe toujours présent après désinstallation' }
+          if (Test-Path $key) { throw 'entrée de désinstallation toujours présente' }
+          if (Test-Path $lnk) { throw 'raccourci toujours présent' }
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          if (($userPath -split ';') -contains $dir) { throw "PATH utilisateur non nettoyé : $userPath" }
