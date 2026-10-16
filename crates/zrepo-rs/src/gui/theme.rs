@@ -191,13 +191,6 @@ pub fn kind_icon(painter: &egui::Painter, rect: Rect, kind: Kind, pal: &Pal) {
     }
 }
 
-/// Loupe du champ de recherche.
-pub fn search_icon(painter: &egui::Painter, center: Pos2, color: Color32) {
-    let st = Stroke::new(1.8, color);
-    painter.circle_stroke(center - vec2(1.5, 1.5), 6.0, st);
-    painter.line_segment([center + vec2(2.8, 2.8), center + vec2(7.0, 7.0)], st);
-}
-
 /// Pastille de filtre (texte + compteur), sélectionnable.
 pub fn pill(ui: &mut Ui, label: &str, count: Option<usize>, selected: bool) -> Response {
     let pal = Pal::of(ui);

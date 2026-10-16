@@ -8,7 +8,7 @@ use std::{
 
 use eframe::egui::{
     self, Align, Color32, CornerRadius, FontId, Key, Layout, Modifiers, Rect, RichText, ScrollArea,
-    Sense, Stroke, StrokeKind, TextEdit, UiBuilder, pos2, text::LayoutJob, vec2,
+    Sense, Stroke, StrokeKind, TextEdit, UiBuilder, ViewportCommand, pos2, text::LayoutJob, vec2,
 };
 use nucleo_matcher::{Config as MatcherConfig, Matcher};
 use zrepo_core::{
@@ -450,11 +450,24 @@ impl Launcher {
     }
 
     fn header_ui(&mut self, ui: &mut egui::Ui, rect: Rect, pal: &Pal, overlay: bool) {
-        theme::search_icon(
-            ui.painter(),
-            pos2(rect.left() + 26.0, rect.center().y),
-            pal.weak,
-        );
+        // Le lanceur n'a pas de bordure système : cette poignée permet de le déplacer.
+        let handle = Rect::from_min_max(rect.min, pos2(rect.left() + 44.0, rect.bottom()));
+        let drag = ui
+            .interact(handle, ui.id().with("window_drag"), Sense::drag())
+            .on_hover_cursor(egui::CursorIcon::Grab)
+            .on_hover_text("Déplacer la fenêtre");
+        if drag.drag_started_by(egui::PointerButton::Primary) {
+            ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+        }
+        for x in [20.0, 26.0] {
+            for y in [-4.0, 0.0, 4.0] {
+                ui.painter().circle_filled(
+                    pos2(rect.left() + x, rect.center().y + y),
+                    1.5,
+                    pal.weak,
+                );
+            }
+        }
         let count = if self.pending > 0 && self.entries.is_empty() {
             String::new()
         } else if self.query.trim().is_empty() {
