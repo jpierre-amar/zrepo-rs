@@ -115,6 +115,28 @@ Les 19 fichiers listés dans `SHA256SUMS` ont été téléchargés et vérifiés
 le binaire Windows publié affiche `zrepo-rs 0.3.1` et a été installé localement
 avec une empreinte SHA-256 identique à celle de l'archive.
 
+## Release v0.3.2
+
+Publiée le 16 octobre 2026 depuis le tag `v0.3.2` (commit `6b4ace3`).
+La [CI du commit](https://github.com/jpierre-amar/zrepo-rs/actions/runs/38912916226)
+et le [workflow de publication](https://github.com/jpierre-amar/zrepo-rs/actions/runs/38913192208)
+ont réussi, y compris les builds et les contrôles d'installeurs sur Linux,
+macOS et Windows. La [release](https://github.com/jpierre-amar/zrepo-rs/releases/tag/v0.3.2)
+est stable et marquée « Latest ».
+
+| Contrôle | Résultat |
+|---|---|
+| Qualité locale | `cargo check --workspace`, formatage, Clippy avec avertissements interdits, tests du workspace et `git diff --check` : OK |
+| Artefacts | 20 fichiers publiés : cinq archives, cinq sommes individuelles, setup Windows et sa somme, `SHA256SUMS`, installeurs et fichiers d'intégration |
+| Intégrité | les 19 fichiers de `SHA256SUMS` ont été téléchargés séparément ; `sha256sum -c SHA256SUMS` : OK pour chacun |
+| Installation Linux isolée | `install.sh --yes --no-setup --version v0.3.2` sous Ubuntu avec HOME/XDG temporaires : archive vérifiée, `zrepo-rs --version` affiche `0.3.2`, `zrepo-rs update` confirme la version courante |
+| Ancien `zrepo` | le fichier sentinelle placé à `~/.local/bin/zrepo` dans le HOME temporaire est resté intact |
+
+Le lancement interactif du binaire Windows publié et les parcours graphiques
+sur les trois plateformes restent à valider manuellement. L'archive et le setup
+Windows ont passé le contrôle d'intégrité ci-dessus ; leur fabrication et les
+tests d'installeur ont réussi en CI.
+
 ## Sécurité
 
 - Le jeton GitHub est stocké sous le service de trousseau `zrepo-rs`.
