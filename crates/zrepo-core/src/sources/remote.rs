@@ -1,10 +1,9 @@
-//! Projets distants, lus dans les ssh_connections de Zed et ouverts via
-//! ssh:// sans clonage.
+//! Projets distants, declares dans zrepo-rs ou Zed et ouverts via ssh://.
 //!
 //! Toutes les lectures de settings.json echouent en silence : un fichier
 //! illisible doit couter les entrees distantes, jamais le launcher entier.
 
-use std::{collections::HashSet, fs, thread};
+use std::{collections::HashSet, fs, process::Stdio, thread};
 
 use serde_json::Value;
 
@@ -24,6 +23,77 @@ pub enum Settings {
     Absent,
     Invalid(String),
     Loaded(Vec<Conn>),
+}
+
+/// Alias explicites de ~/.ssh/config. Les motifs Host (*, ?, !) ne sont pas
+/// des serveurs individuels et ne peuvent pas etre proposes dans l'interface.
+pub fn parse_ssh_hosts(text: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    text.lines()
+        .filter_map(|line| {
+            let line = line.split('#').next()?.trim();
+            let (key, values) = line.split_once(char::is_whitespace)?;
+            key.eq_ignore_ascii_case("Host").then_some(values)
+        })
+        .flat_map(str::split_whitespace)
+        .filter(|host| !host.contains(['*', '?', '!']) && !host.starts_with('-'))
+        .filter(|host| seen.insert(host.to_ascii_lowercase()))
+        .map(String::from)
+        .collect()
+}
+
+/// Serveurs connus localement : configuration SSH, puis connexions Zed.
+pub fn configured_hosts(cfg: &Config) -> Vec<String> {
+    let mut hosts = sys::home_dir()
+        .and_then(|home| fs::read_to_string(home.join(".ssh/config")).ok())
+        .map(|text| parse_ssh_hosts(&text))
+        .unwrap_or_default();
+    if let Settings::Loaded(conns) = load(cfg) {
+        let mut seen: HashSet<String> = hosts.iter().map(|h| h.to_ascii_lowercase()).collect();
+        hosts.extend(
+            conns
+                .into_iter()
+                .map(|c| c.host)
+                .filter(|h| seen.insert(h.to_ascii_lowercase())),
+        );
+    }
+    hosts
+}
+
+/// Resultat du test SSH sans invite interactive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SshStatus {
+    Ready,
+    HostKeyChanged,
+    Unavailable,
+}
+
+pub fn ssh_status(host: &str) -> SshStatus {
+    let output = sys::command("ssh")
+        .args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-o",
+            "ConnectTimeout=3",
+            "-o",
+            "ConnectionAttempts=1",
+            host,
+            "exit",
+        ])
+        .stdin(Stdio::null())
+        .output();
+    match output {
+        Ok(out) if out.status.success() => SshStatus::Ready,
+        Ok(out)
+            if String::from_utf8_lossy(&out.stderr)
+                .contains("REMOTE HOST IDENTIFICATION HAS CHANGED") =>
+        {
+            SshStatus::HostKeyChanged
+        }
+        _ => SshStatus::Unavailable,
+    }
 }
 
 pub fn load(cfg: &Config) -> Settings {
@@ -155,11 +225,28 @@ pub fn entries(cfg: &Config, refresh: bool) -> (Vec<Entry>, Vec<String>) {
     if !cfg.remote.enabled {
         return (Vec::new(), warnings);
     }
-    let conns = match load(cfg) {
-        Settings::Loaded(c) => c,
-        _ => Vec::new(),
-    };
-    let base = settings_entries(&conns);
+    let mut conns: Vec<Conn> = cfg
+        .remote
+        .servers
+        .iter()
+        .map(|s| Conn {
+            host: s.host.clone(),
+            label: if s.label.trim().is_empty() {
+                s.host.clone()
+            } else {
+                s.label.clone()
+            },
+            paths: s.paths.clone(),
+        })
+        .collect();
+    if let Settings::Loaded(zed) = load(cfg) {
+        conns.extend(zed);
+    }
+    let mut known = HashSet::new();
+    let base: Vec<Entry> = settings_entries(&conns)
+        .into_iter()
+        .filter(|e| known.insert(e.key.clone()))
+        .collect();
 
     let scanned = if refresh {
         let found = scan_all(cfg, &conns, &mut warnings);
@@ -181,8 +268,43 @@ pub fn entries(cfg: &Config, refresh: bool) -> (Vec<Entry>, Vec<String>) {
         read_cache(cfg)
     };
 
-    let known: HashSet<String> = base.iter().map(|e| e.key.clone()).collect();
     let mut all = base;
-    all.extend(scanned.into_iter().filter(|e| !known.contains(&e.key)));
+    all.extend(scanned.into_iter().filter(|e| {
+        conns
+            .iter()
+            .any(|c| e.key.starts_with(&format!("ssh://{}/", c.host)))
+            && known.insert(e.key.clone())
+    }));
     (all, warnings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::RemoteServer;
+
+    #[test]
+    fn trouve_les_alias_sans_les_motifs() {
+        let hosts = parse_ssh_hosts(
+            "Host VPSHost vps-prod\n  HostName 147.79.117.138\nHost *\nHost !cache *.local\nhost VPSHost\nHost 193.108.53.92 # direct\n",
+        );
+        assert_eq!(hosts, ["VPSHost", "vps-prod", "193.108.53.92"]);
+    }
+
+    #[test]
+    fn serveur_manuel_apparait_sans_zed_ni_scan() {
+        let mut cfg = Config::default();
+        cfg.remote.zed_settings = "__zrepo_missing_zed_settings__.json".into();
+        cfg.remote_cache_file = "__zrepo_missing_remote_cache__.tsv".into();
+        cfg.remote.servers.push(RemoteServer {
+            host: "VPSHost".into(),
+            label: "Production".into(),
+            paths: vec!["/home/jp/app".into()],
+        });
+        let (projects, warnings) = entries(&cfg, false);
+        assert!(warnings.is_empty());
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].key, "ssh://VPSHost/home/jp/app");
+        assert_eq!(projects[0].owner, "Production");
+    }
 }

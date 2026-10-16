@@ -49,12 +49,23 @@ pub struct GithubConfig {
     pub enabled: bool,
 }
 
-/// Serveurs et projets distants : les ssh_connections de Zed, seule source
-/// de verite (pas de liste dupliquee ici).
+/// Serveurs ajoutes dans zrepo-rs, en plus des ssh_connections de Zed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteServer {
+    pub host: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+}
+
+/// Serveurs et projets distants, declares ici ou dans Zed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RemoteConfig {
     pub enabled: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub servers: Vec<RemoteServer>,
     /// Vide = emplacement par defaut de l'OS (voir `zed_settings_path`).
     pub zed_settings: String,
     pub scan_depth: usize,
@@ -86,6 +97,7 @@ impl Default for RemoteConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            servers: Vec::new(),
             zed_settings: String::new(),
             scan_depth: 3,
             ssh_timeout: 8,
@@ -366,5 +378,17 @@ command = "gvim"
         assert!(cfg.zed_settings_path().ends_with("settings.json"));
         cfg.remote.zed_settings = "/tmp/z.json".into();
         assert_eq!(cfg.zed_settings_path(), PathBuf::from("/tmp/z.json"));
+    }
+
+    #[test]
+    fn serveurs_manuels_survivent_a_la_serialisation() {
+        let cfg = Config::parse(
+            "[[remote.servers]]\nhost = 'VPSHost'\nlabel = 'Production'\npaths = ['/home/jp/app']\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.remote.servers[0].host, "VPSHost");
+        assert_eq!(cfg.remote.servers[0].paths, ["/home/jp/app"]);
+        let back = Config::parse(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
+        assert_eq!(back.remote.servers, cfg.remote.servers);
     }
 }

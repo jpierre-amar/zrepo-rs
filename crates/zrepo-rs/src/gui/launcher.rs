@@ -55,6 +55,7 @@ pub enum Action {
     None,
     Close(i32),
     Settings,
+    SettingsServers,
 }
 
 pub struct Launcher {
@@ -145,10 +146,11 @@ impl Launcher {
 
     /// Après l'assistant (Ctrl-,) : nouvelle configuration, nouvelle liste.
     pub fn reconfigure(&mut self, ctx: &egui::Context, cfg: Config) {
+        let servers_changed = self.cfg.remote.servers != cfg.remote.servers;
         self.cfg = cfg;
         self.apply_config(None);
         self.failure = None;
-        self.load(ctx, false);
+        self.load(ctx, servers_changed);
     }
 
     fn apply_config(&mut self, target: Option<Target>) {
@@ -441,7 +443,9 @@ impl Launcher {
                 Stroke::new(1.0, pal.border),
             );
             self.pills_ui(ui, pills);
-            self.list_ui(ui, list, &pal);
+            if self.list_ui(ui, list, &pal) {
+                action = Action::SettingsServers;
+            }
             self.details_ui(ui, details, &pal);
             ui.painter()
                 .hline(card.x_range(), footer.top(), Stroke::new(1.0, pal.border));
@@ -541,7 +545,7 @@ impl Launcher {
         }
     }
 
-    fn list_ui(&mut self, ui: &mut egui::Ui, rect: Rect, pal: &Pal) {
+    fn list_ui(&mut self, ui: &mut egui::Ui, rect: Rect, pal: &Pal) -> bool {
         let mut child = ui.new_child(UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 0.0))));
         child.spacing_mut().item_spacing = vec2(0.0, 0.0);
         if self.view.is_empty() {
@@ -551,6 +555,11 @@ impl Launcher {
                 (
                     format!("Aucun projet ne correspond à « {} »", self.query.trim()),
                     "Essayez moins de lettres, ou un autre filtre.".to_string(),
+                )
+            } else if self.filter == Filter::Remote {
+                (
+                    "Aucun projet distant".to_string(),
+                    "Recherchez vos hôtes SSH ou ajoutez un serveur dans les réglages.".to_string(),
                 )
             } else if self.entries.is_empty() {
                 (
@@ -581,7 +590,12 @@ impl Launcher {
                 let pos = pos2(c.x - g.size().x / 2.0, c.y + 16.0);
                 child.painter().galley(pos, g, pal.faint);
             }
-            return;
+            if self.pending == 0 && self.query.trim().is_empty() && self.filter == Filter::Remote {
+                let button_rect = Rect::from_center_size(pos2(c.x, c.y + 72.0), vec2(190.0, 30.0));
+                let mut button_ui = child.new_child(UiBuilder::new().max_rect(button_rect));
+                return theme::button(&mut button_ui, "Configurer les serveurs", true).clicked();
+            }
+            return false;
         }
         let mut sa = ScrollArea::vertical()
             .id_salt("projets")
@@ -617,6 +631,7 @@ impl Launcher {
             let ctx = ui.ctx().clone();
             self.open(&ctx, self.target.clone());
         }
+        false
     }
 
     fn row_ui(&self, ui: &mut egui::Ui, i: usize, pal: &Pal) -> (bool, bool) {

@@ -4,7 +4,7 @@ Lanceur de projets pour **Linux**, **macOS** et **Windows**. Une fenêtre flotta
 (dans l'esprit de Raycast ou Spotlight) réunit :
 
 - vos **projets locaux** (le dossier des projets, `~/Projects` par défaut) ;
-- vos **projets distants**, déclarés dans les `ssh_connections` de Zed ;
+- vos **projets distants**, déclarés dans l'assistant ou dans les `ssh_connections` de Zed ;
 - vos **dépôts GitHub** (les vôtres, ceux où vous êtes collaborateur et ceux de vos organisations).
 
 Tapez quelques lettres (recherche floue) puis Entrée : le projet s'ouvre dans la cible de
@@ -178,6 +178,11 @@ zed_settings = ""               # vide = emplacement Zed par défaut
 scan_depth = 3
 ssh_timeout = 8
 
+[[remote.servers]]              # facultatif : serveur ajouté dans l'assistant
+host = "mon-serveur"            # alias de ~/.ssh/config ou utilisateur@hôte
+label = "Production"
+paths = ["/home/moi/projet"]    # facultatif : sans chemin, Ctrl-R lance un scan Git
+
 [herdr]
 enabled = true
 agent = "codex"
@@ -199,6 +204,11 @@ args = ["--new-window", "{path}"]   # sans {path}, le dossier est ajouté à la 
 
 Un éditeur ajouté porte le nom d'un éditeur connu (« VS Code »…) ? Votre déclaration remplace
 la détection automatique.
+
+À l'étape **Serveurs**, l'assistant lit les alias de `~/.ssh/config` et les connexions Zed,
+vérifie leur connexion SSH sans demander de mot de passe, puis permet de les ajouter en un clic.
+Un serveur hors ligne peut quand même être ajouté. Les chemins de projets sont facultatifs ;
+**Ctrl-R** recherche les dépôts Git sur les serveurs configurés.
 
 Les variables d'environnement ont priorité sur le fichier : `ZREPO_RS_PROJECTS_DIR`,
 `ZREPO_RS_CACHE_TTL`, etc. Pour GitHub, `GITHUB_TOKEN` ou `ZREPO_RS_GITHUB_TOKEN` passent avant
