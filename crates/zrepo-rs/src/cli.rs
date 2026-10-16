@@ -24,7 +24,7 @@ Clés : chemin absolu (projet local), owner/repo (GitHub), ssh://hôte/chemin (d
 Cibles : zed, herdr, terminal, ou un éditeur (vscode, cursor, windsurf, sublime,
 idea, pycharm, webstorm, phpstorm, rustrover, ou le nom d'un éditeur ajouté).
 Sans --with : la cible par défaut. `--with codex` équivaut à `--with herdr`.
-Les projets distants (ssh://) s'ouvrent dans Zed ou dans Herdr.
+Les projets distants (ssh://) s'ouvrent dans Zed, Herdr ou un terminal SSH.
 Options de la fenêtre : --refresh (réinterroge GitHub et rescanne les serveurs),
 --codex (Herdr comme cible par défaut).
 

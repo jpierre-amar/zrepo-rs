@@ -144,7 +144,8 @@ Au premier lancement (ou avec `zrepo-rs setup`), l'assistant vous guide :
 Cibles de `--with` : `zed`, `herdr`, `terminal`, `vscode`, `cursor`, `windsurf`, `sublime`,
 `idea`, `pycharm`, `webstorm`, `phpstorm`, `rustrover`, ou le nom d'un éditeur que vous avez
 ajouté. Sans `--with`, la cible par défaut est utilisée. Les projets distants (`ssh://`)
-s'ouvrent seulement dans Zed ou Herdr.
+s'ouvrent dans Zed, Herdr ou un terminal SSH. Le terminal lance un shell dans le dossier
+du projet sur le serveur, en utilisant l'alias et les clés de votre configuration SSH.
 
 Dans la fenêtre : **Entrée** ouvre, **Ctrl-E** ouvre dans Zed, **Ctrl-Y** dans Herdr,
 **Ctrl-T** dans un terminal, **Tab** change de cible, **Ctrl-R** rafraîchit,

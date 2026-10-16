@@ -333,6 +333,144 @@ pub fn launch(app: &App, dir: &str, progress: &dyn Fn(&str)) -> Res<()> {
     }
 }
 
+/// Ouvre SSH dans un terminal interactif, puis un shell de connexion dans le
+/// dossier distant. La cible SSH reste un alias de ~/.ssh/config.
+pub fn launch_remote_terminal(app: &App, key: &str, progress: &dyn Fn(&str)) -> Res<()> {
+    let (host, path) = remote_project(key)?;
+    let ssh = sys::which("ssh")
+        .ok_or_else(|| Fail::new(crate::error::EX_DEPS, "ssh introuvable dans le PATH."))?;
+    let remote_command = format!(
+        "cd -- {} && exec \"${{SHELL:-/bin/sh}}\" -l",
+        shell_quote(&path)
+    );
+    progress(&format!("Terminal SSH : {host}:{path}"));
+    let ok = remote_terminal_process(app, &ssh, &host, &remote_command);
+    if ok {
+        Ok(())
+    } else {
+        Err(Fail::new(
+            EX_FAIL,
+            format!("Impossible de lancer le terminal SSH pour {host}:{path}."),
+        ))
+    }
+}
+
+fn remote_project(key: &str) -> Res<(String, String)> {
+    let invalid = || Fail::new(EX_FAIL, format!("Adresse SSH invalide : {key}"));
+    let rest = key.strip_prefix("ssh://").ok_or_else(invalid)?;
+    let (host, path) = rest.split_once('/').ok_or_else(invalid)?;
+    if host.is_empty()
+        || host.starts_with('-')
+        || !host.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@' | ':' | '[' | ']')
+        })
+        || path.is_empty()
+        || path.contains(['\r', '\n', '\0'])
+    {
+        return Err(invalid());
+    }
+    Ok((host.to_string(), format!("/{path}")))
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(windows)]
+fn remote_terminal_process(app: &App, ssh: &Path, host: &str, remote_command: &str) -> bool {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+
+    // EncodedCommand evite que Windows Terminal ou PowerShell reinterprete les
+    // espaces et les apostrophes du chemin distant. NoExit garde l'erreur SSH
+    // visible si la connexion echoue.
+    let ps_quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    let script = format!(
+        "& {} -tt {} {}",
+        ps_quote(&ssh.to_string_lossy()),
+        ps_quote(host),
+        ps_quote(remote_command)
+    );
+    let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let encoded = STANDARD.encode(utf16);
+    let is_wt = app
+        .program
+        .file_stem()
+        .is_some_and(|s| s.eq_ignore_ascii_case("wt"));
+    let shell = if is_wt {
+        sys::which("pwsh").or_else(|| sys::which("powershell"))
+    } else if app
+        .program
+        .file_stem()
+        .is_some_and(|s| s.eq_ignore_ascii_case("pwsh") || s.eq_ignore_ascii_case("powershell"))
+    {
+        Some(app.program.clone())
+    } else {
+        // Un terminal personnalise peut ne pas accepter de commande a lancer.
+        // La console PowerShell permet tout de meme d'ouvrir le projet distant.
+        sys::which("pwsh").or_else(|| sys::which("powershell"))
+    };
+    let Some(shell) = shell else { return false };
+    let encoded = encoded.as_str();
+    if is_wt {
+        let shell = shell.to_string_lossy();
+        sys::spawn_detached(
+            &app.program,
+            &["new-tab", &shell, "-NoExit", "-EncodedCommand", encoded],
+        )
+    } else {
+        sys::spawn_console(
+            &shell,
+            &["-NoExit", "-EncodedCommand", encoded],
+            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn remote_terminal_process(app: &App, ssh: &Path, host: &str, remote_command: &str) -> bool {
+    if app.program != Path::new("open") {
+        return false;
+    }
+    let line = format!(
+        "{} -tt {} {}",
+        shell_quote(&ssh.to_string_lossy()),
+        shell_quote(host),
+        shell_quote(remote_command)
+    );
+    let apple_quote = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+    let script = format!(
+        "tell application \"Terminal\" to do script {}",
+        apple_quote(&line)
+    );
+    sys::spawn_detached(
+        Path::new("osascript"),
+        &[
+            "-e",
+            &script,
+            "-e",
+            "tell application \"Terminal\" to activate",
+        ],
+    )
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn remote_terminal_process(app: &App, ssh: &Path, host: &str, remote_command: &str) -> bool {
+    let Some(name) = app.program.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let prefix: &[&str] = match name {
+        "ghostty" | "alacritty" | "foot" | "konsole" | "xterm" | "x-terminal-emulator" => &["-e"],
+        "kitty" | "gnome-terminal" => &["--"],
+        "xfce4-terminal" => &["-x"],
+        "wezterm" => &["start", "--"],
+        _ => return false,
+    };
+    let mut args = prefix.to_vec();
+    let ssh = ssh.to_string_lossy();
+    args.extend([ssh.as_ref(), "-tt", host, remote_command]);
+    sys::spawn_detached(&app.program, &args)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,5 +540,26 @@ mod tests {
         assert_eq!(t.args_for("/p"), vec!["-C", "/p"]);
         cfg.terminal.command = "zrepo-rs-terminal-qui-n-existe-pas".into();
         assert!(terminal(&cfg).is_none());
+    }
+
+    #[test]
+    fn projet_ssh_et_chemin_avec_apostrophe() {
+        assert_eq!(
+            remote_project("ssh://VPSHost/home/jp/projets/ClimaServ").unwrap(),
+            ("VPSHost".into(), "/home/jp/projets/ClimaServ".into())
+        );
+        assert_eq!(
+            shell_quote("/home/jp/l'atelier"),
+            "'/home/jp/l'\"'\"'atelier'"
+        );
+        for invalid in [
+            "ssh://VPSHost",
+            "ssh:///home/jp",
+            "ssh://-oProxyCommand=evil/home/jp",
+            "ssh://host/",
+            "ssh://host/a\nb",
+        ] {
+            assert!(remote_project(invalid).is_err(), "{invalid}");
+        }
     }
 }

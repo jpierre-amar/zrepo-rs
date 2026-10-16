@@ -103,6 +103,7 @@ pub fn open(cfg: &Config, key: &str, target: Target, progress: &dyn Fn(&str)) ->
     enum How {
         Zed,
         Herdr,
+        Terminal(apps::App),
         App(apps::App),
     }
     // Terminal et editeurs : verifies avant de cloner, une cible absente
@@ -110,7 +111,7 @@ pub fn open(cfg: &Config, key: &str, target: Target, progress: &dyn Fn(&str)) ->
     let how = match &target {
         Target::Zed => How::Zed,
         Target::Herdr => How::Herdr,
-        Target::Terminal => How::App(apps::terminal(cfg).ok_or_else(|| {
+        Target::Terminal => How::Terminal(apps::terminal(cfg).ok_or_else(|| {
             Fail::new(
                 EX_DEPS,
                 "Aucun terminal trouvé. Indiquez-en un dans config.toml, section [terminal].",
@@ -134,6 +135,10 @@ pub fn open(cfg: &Config, key: &str, target: Target, progress: &dyn Fn(&str)) ->
     }
     let resolved = resolve_target(cfg, key, progress)?;
     match how {
+        How::Terminal(app) if resolved.starts_with("ssh://") => {
+            apps::launch_remote_terminal(&app, &resolved, progress)
+        }
+        How::Terminal(app) => apps::launch(&app, &resolved, progress),
         How::App(app) => apps::launch(&app, &resolved, progress),
         How::Zed => open_in_zed(&resolved, progress),
         #[cfg(not(windows))]
