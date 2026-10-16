@@ -118,6 +118,7 @@ Au premier lancement (ou avec `zrepo-rs setup`), l'assistant vous guide :
 Dans la fenêtre : **Entrée** ouvre, **Ctrl-E** ouvre dans Zed, **Ctrl-Y** dans Herdr,
 **Tab** change de cible, **Ctrl-R** rafraîchit, **Ctrl-1** à **Ctrl-4** choisissent le filtre
 (Tous, Locaux, Serveurs, GitHub), **Ctrl-,** ouvre les réglages, **Échap** ferme.
+Faites glisser la poignée à six points, à gauche du champ de recherche, pour déplacer la fenêtre.
 La fenêtre se ferme aussi quand elle perd le focus, sauf pendant un clonage ou
 quand une erreur est affichée.
 
