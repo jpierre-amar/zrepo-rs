@@ -137,6 +137,26 @@ sur les trois plateformes restent à valider manuellement. L'archive et le setup
 Windows ont passé le contrôle d'intégrité ci-dessus ; leur fabrication et les
 tests d'installeur ont réussi en CI.
 
+## Release v0.3.3
+
+Publiée le 16 octobre 2026 depuis le tag `v0.3.3` (commit `61bb056`).
+Cette version remplace le logo de l'application dans les ressources SVG, PNG et
+ICO utilisées par les plateformes et l'installateur Windows. La
+[CI sur `main`](https://github.com/jpierre-amar/zrepo-rs/actions/runs/38916912196)
+et le [workflow de publication](https://github.com/jpierre-amar/zrepo-rs/actions/runs/38917175493)
+ont réussi. La [release](https://github.com/jpierre-amar/zrepo-rs/releases/tag/v0.3.3)
+est stable et marquée « Latest ».
+
+| Contrôle | Résultat |
+|---|---|
+| Qualité locale | `cargo check --workspace`, formatage, Clippy sans avertissement et 54 tests : OK |
+| Logo | SVG valide, PNG RGBA 256 × 256 avec transparence, ICO contenant sept tailles de 16 à 256 px |
+| Artefacts | 20 fichiers publiés, dont le setup Windows `zrepo-rs-setup-x86_64.exe` |
+| Intégrité | les 19 fichiers de `SHA256SUMS` ont été téléchargés séparément ; `sha256sum -c SHA256SUMS` : OK pour chacun |
+
+L'aspect du nouveau logo dans les raccourcis et les fenêtres des trois systèmes
+reste à contrôler manuellement après installation.
+
 ## Sécurité
 
 - Le jeton GitHub est stocké sous le service de trousseau `zrepo-rs`.
