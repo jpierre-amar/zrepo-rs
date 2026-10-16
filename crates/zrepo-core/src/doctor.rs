@@ -25,6 +25,26 @@ fn check(ok: bool, label: &str, detail: impl Into<String>) -> Check {
     }
 }
 
+fn utc_date(seconds: u64) -> String {
+    let days = (seconds / 86_400) as i64 + 719_468;
+    let era = days.div_euclid(146_097);
+    let doe = days - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    if month <= 2 {
+        year += 1;
+    }
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02} UTC",
+        (seconds % 86_400) / 3_600,
+        (seconds % 3_600) / 60
+    )
+}
+
 fn line_count(path: &Path) -> Option<usize> {
     let t = fs::read_to_string(path).ok()?;
     let n = t.lines().filter(|l| !l.is_empty()).count();
@@ -206,13 +226,22 @@ pub fn run(cfg: &Config) -> Vec<Check> {
         None => check(true, "cache", format!("{cf} (vide)")),
     });
     let rf = cfg.remote_cache_file.display();
-    out.push(match line_count(&cfg.remote_cache_file) {
-        Some(n) => check(true, "scan", format!("{rf} ({n} entrées)")),
-        None => check(
+    let hosts = remote::cache_summary(cfg);
+    if hosts.is_empty() {
+        out.push(check(
             true,
             "scan",
             format!("{rf} (vide — lancez zrepo-rs list --refresh)"),
-        ),
-    });
+        ));
+    } else {
+        for (host, count, last_success) in hosts {
+            let when = last_success.map_or("date inconnue".to_string(), utc_date);
+            out.push(check(
+                true,
+                "scan",
+                format!("{host} : {count} entrées ; dernière réussite : {when}"),
+            ));
+        }
+    }
     out
 }

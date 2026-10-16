@@ -18,6 +18,7 @@ zrepo-rs — ouvrir un projet dans Zed, Herdr, un terminal ou votre éditeur
   zrepo-rs open <clé> [--with <cible>]
                               ouvre un projet sans fenêtre (clone si besoin)
   zrepo-rs doctor                vérifie les dépendances, les cibles et la connexion GitHub
+  zrepo-rs update [--install]    vérifie la dernière release stable ; installe sur demande
   zrepo-rs --version | --help
 
 Clés : chemin absolu (projet local), owner/repo (GitHub), ssh://hôte/chemin (distant).
@@ -54,6 +55,9 @@ pub enum Command {
         target: Option<Target>,
     },
     Doctor,
+    Update {
+        install: bool,
+    },
     Help,
     Version,
 }
@@ -69,6 +73,11 @@ pub fn parse(args: &[String]) -> Res<Command> {
         Some("list") => parse_list(rest),
         Some("open") => parse_open(rest),
         Some("doctor") => no_args(rest).map(|()| Command::Doctor),
+        Some("update") => match rest {
+            [] => Ok(Command::Update { install: false }),
+            [arg] if arg == "--install" => Ok(Command::Update { install: true }),
+            [arg, ..] => Err(unknown(arg)),
+        },
         Some("help") => Ok(Command::Help),
         _ => parse_launcher(args),
     }
@@ -196,6 +205,36 @@ pub fn doctor() -> Res<()> {
     Ok(())
 }
 
+pub fn update(install: bool) -> Res<()> {
+    let cfg = Config::load()?;
+    let status = zrepo_core::update::check(&cfg, true)?;
+    println!("Version installée : {}", status.installed);
+    if let Some(warning) = &status.warning {
+        eprintln!("{warning} Résultat du dernier contrôle conservé.");
+    }
+    if let Some(release) = status.available {
+        println!(
+            "Version disponible : {}\n{}\n\n{}",
+            release.tag_name, release.html_url, release.body
+        );
+        if install {
+            if status.stale {
+                return Err(Fail::new(
+                    EX_FAIL,
+                    "Installation impossible avec un contrôle de version périmé. Réessayez plus tard.",
+                ));
+            }
+            zrepo_core::update::install(&release)?;
+            println!("Mise à jour installée. Relancez zrepo-rs.");
+        } else {
+            println!("Pour l'installer : zrepo-rs update --install");
+        }
+    } else {
+        println!("Aucune mise à jour disponible.");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,6 +261,11 @@ mod tests {
         );
         assert_eq!(p(&["setup"]).unwrap(), Command::Setup);
         assert_eq!(p(&["doctor"]).unwrap(), Command::Doctor);
+        assert_eq!(p(&["update"]).unwrap(), Command::Update { install: false });
+        assert_eq!(
+            p(&["update", "--install"]).unwrap(),
+            Command::Update { install: true }
+        );
         assert_eq!(p(&["--doctor"]).unwrap(), Command::Doctor);
         assert_eq!(p(&["--version"]).unwrap(), Command::Version);
         assert_eq!(p(&["-h"]).unwrap(), Command::Help);

@@ -32,6 +32,10 @@ pub fn ssh_status(host: &str) -> SshStatus {
     remote::ssh_status(host)
 }
 
+pub fn ssh_project_status(key: &str) -> SshStatus {
+    remote::ssh_project_status(key)
+}
+
 pub fn ssh_installed() -> bool {
     crate::sys::has("ssh")
 }

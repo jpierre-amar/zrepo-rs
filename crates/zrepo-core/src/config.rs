@@ -28,6 +28,7 @@ pub struct Config {
     pub cache_ttl: u64, // secondes
     pub github: GithubConfig,
     pub remote: RemoteConfig,
+    pub updates: UpdateConfig,
     pub herdr: HerdrConfig,
     pub ui: UiConfig,
     pub terminal: TerminalConfig,
@@ -47,6 +48,22 @@ pub struct Config {
 #[serde(default)]
 pub struct GithubConfig {
     pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    pub enabled: bool,
+    pub cache_ttl: u64,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            cache_ttl: 86400,
+        }
+    }
 }
 
 /// Serveurs ajoutes dans zrepo-rs, en plus des ssh_connections de Zed.
@@ -135,6 +152,7 @@ impl Default for Config {
             cache_ttl: 600,
             github: GithubConfig::default(),
             remote: RemoteConfig::default(),
+            updates: UpdateConfig::default(),
             herdr: HerdrConfig::default(),
             ui: UiConfig::default(),
             terminal: TerminalConfig::default(),

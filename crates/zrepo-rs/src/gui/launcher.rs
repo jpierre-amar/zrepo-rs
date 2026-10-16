@@ -1,9 +1,11 @@
 //! Fenêtre de lancement : recherche, filtres, liste, détails, ouverture.
 
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, Sender},
     thread,
+    time::{Duration, Instant},
 };
 
 use eframe::egui::{
@@ -16,7 +18,7 @@ use zrepo_core::{
     entry::{Entry, Kind},
     error::{EX_CANCEL, EX_OK, Res},
     open::{self, Target},
-    sources,
+    sources, update,
 };
 
 use super::{
@@ -31,6 +33,7 @@ enum Msg {
     Locals(Vec<Entry>),
     Remotes(Vec<Entry>, Vec<String>),
     Github(Res<Vec<Entry>>),
+    Update(Res<update::Status>),
 }
 
 enum OpenMsg {
@@ -40,6 +43,7 @@ enum OpenMsg {
 
 struct Opening {
     name: String,
+    remote: bool,
     target: String,
     log: Vec<String>,
     rx: Receiver<OpenMsg>,
@@ -69,6 +73,14 @@ pub struct Launcher {
     github: Vec<Entry>,
     remote_warnings: Vec<String>,
     github_error: Option<String>,
+    update_status: Option<update::Status>,
+    update_error: Option<String>,
+    update_popup: bool,
+    update_rx: Option<Receiver<Res<()>>>,
+    ssh_states: HashMap<String, Option<sources::SshStatus>>,
+    ssh_tx: Sender<(String, sources::SshStatus)>,
+    ssh_rx: Receiver<(String, sources::SshStatus)>,
+    drag_grace_until: Option<Instant>,
     entries: Vec<Entry>,
     matcher: Matcher,
     query: String,
@@ -97,6 +109,7 @@ impl Launcher {
         refresh: bool,
     ) -> Self {
         let (tx, rx) = mpsc::channel();
+        let (ssh_tx, ssh_rx) = mpsc::channel();
         let (cfg, error) = match cfg {
             Ok(c) => (c, None),
             Err(e) => (Config::default(), Some(e)),
@@ -112,6 +125,14 @@ impl Launcher {
             github: Vec::new(),
             remote_warnings: Vec::new(),
             github_error: None,
+            update_status: None,
+            update_error: None,
+            update_popup: false,
+            update_rx: None,
+            ssh_states: HashMap::new(),
+            ssh_tx,
+            ssh_rx,
+            drag_grace_until: None,
             entries: Vec::new(),
             matcher: Matcher::new(MatcherConfig::DEFAULT),
             query: std::env::var("ZREPO_RS_DEBUG_QUERY").unwrap_or_default(),
@@ -148,6 +169,11 @@ impl Launcher {
     pub fn reconfigure(&mut self, ctx: &egui::Context, cfg: Config) {
         let servers_changed = self.cfg.remote.servers != cfg.remote.servers;
         self.cfg = cfg;
+        if !self.cfg.updates.enabled {
+            self.update_status = None;
+            self.update_error = None;
+            self.update_popup = false;
+        }
         self.apply_config(None);
         self.failure = None;
         self.load(ctx, servers_changed);
@@ -161,14 +187,23 @@ impl Launcher {
 
     /// Doit-on garder la fenêtre ouverte malgré la perte du focus ?
     pub fn busy(&self) -> bool {
-        self.opening.is_some() || self.failure.is_some()
+        self.opening.is_some()
+            || self.failure.is_some()
+            || self.update_popup
+            || self.update_rx.is_some()
+            || self
+                .drag_grace_until
+                .is_some_and(|until| Instant::now() < until)
     }
 
     /// Trois sources en parallèle. Les résultats d'un chargement précédent
     /// (Ctrl-R pendant un chargement) sont ignorés grâce au numéro de génération.
     fn load(&mut self, ctx: &egui::Context, refresh: bool) {
         self.generation += 1;
-        self.pending = 3;
+        if refresh {
+            self.ssh_states.clear();
+        }
+        self.pending = if self.cfg.updates.enabled { 4 } else { 3 };
         let generation = self.generation;
         let spawn = |job: Box<dyn FnOnce(&Config) -> Msg + Send>| {
             let (cfg, tx, ctx) = (self.cfg.clone(), self.tx.clone(), ctx.clone());
@@ -185,9 +220,19 @@ impl Launcher {
         spawn(Box::new(move |cfg| {
             Msg::Github(sources::github(cfg, refresh))
         }));
+        if self.cfg.updates.enabled {
+            spawn(Box::new(move |cfg| {
+                Msg::Update(update::check(cfg, refresh))
+            }));
+        }
     }
 
     fn receive(&mut self) {
+        while let Ok((key, status)) = self.ssh_rx.try_recv() {
+            if self.ssh_states.contains_key(&key) {
+                self.ssh_states.insert(key, Some(status));
+            }
+        }
         let mut changed = false;
         while let Ok((generation, msg)) = self.rx.try_recv() {
             if generation != self.generation {
@@ -206,6 +251,11 @@ impl Launcher {
                 }
                 // L'ancienne liste GitHub reste affichée : mieux vaut périmé que vide.
                 Msg::Github(Err(f)) => self.github_error = Some(f.msg),
+                Msg::Update(Ok(status)) => {
+                    self.update_error = status.warning.clone();
+                    self.update_status = Some(status);
+                }
+                Msg::Update(Err(f)) => self.update_error = Some(f.msg),
             }
             changed = true;
         }
@@ -300,6 +350,7 @@ impl Launcher {
         });
         self.opening = Some(Opening {
             name: e.name.clone(),
+            remote: e.kind == Kind::Remote,
             target: label,
             log: Vec::new(),
             rx,
@@ -310,6 +361,16 @@ impl Launcher {
         let until = ctx.input(|i| i.time) + 4.0;
         self.notice = Some((msg.to_string(), until));
         ctx.request_repaint_after(std::time::Duration::from_secs(4));
+    }
+
+    fn probe_remote(&mut self, ctx: &egui::Context, key: &str) {
+        self.ssh_states.insert(key.to_string(), None);
+        let (key, tx, ctx) = (key.to_string(), self.ssh_tx.clone(), ctx.clone());
+        thread::spawn(move || {
+            let status = sources::ssh_project_status(&key);
+            let _ = tx.send((key, status));
+            ctx.request_repaint();
+        });
     }
 
     fn dest_for(&mut self, e: &Entry) -> Option<PathBuf> {
@@ -328,6 +389,10 @@ impl Launcher {
         while let Ok(m) = op.rx.try_recv() {
             match m {
                 OpenMsg::Progress(s) => op.log.push(s),
+                OpenMsg::Done(Ok(())) if op.remote => {
+                    self.opening = None;
+                    return None;
+                }
                 OpenMsg::Done(Ok(())) => return Some(EX_OK),
                 OpenMsg::Done(Err(f)) => {
                     let title = format!("Impossible d'ouvrir {}", op.name);
@@ -409,6 +474,17 @@ impl Launcher {
 
     pub fn ui(&mut self, ui: &mut egui::Ui) -> Action {
         self.receive();
+        if let Some(rx) = &self.update_rx
+            && let Ok(result) = rx.try_recv()
+        {
+            self.update_rx = None;
+            match result {
+                Ok(()) => {
+                    self.update_error = Some("Mise à jour installée. Relancez zrepo-rs.".into())
+                }
+                Err(f) => self.update_error = Some(f.msg),
+            }
+        }
         if let Some(code) = self.poll_opening() {
             return Action::Close(code);
         }
@@ -460,7 +536,60 @@ impl Launcher {
         {
             action = Action::Close(code);
         }
+        self.update_window(&ctx);
         action
+    }
+
+    fn update_window(&mut self, ctx: &egui::Context) {
+        if !self.update_popup {
+            return;
+        }
+        let Some(status) = &self.update_status else {
+            return;
+        };
+        let Some(release) = &status.available else {
+            return;
+        };
+        let mut open = self.update_popup;
+        let mut install = false;
+        egui::Window::new("Mise à jour de zrepo-rs")
+            .open(&mut open)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "Installée : {}  ·  Disponible : {}",
+                    status.installed, release.tag_name
+                ));
+                if let Some(warning) = &status.warning {
+                    ui.label(format!("{warning} Informations du dernier contrôle."));
+                }
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .show(ui, |ui| {
+                        ui.label(&release.body);
+                    });
+                ui.hyperlink_to("Voir la release", &release.html_url);
+                if self.update_rx.is_some() {
+                    ui.label("Installation en cours…");
+                } else if !status.stale && ui.button("Installer cette version").clicked() {
+                    install = true;
+                }
+                if let Some(error) = &self.update_error {
+                    ui.label(error);
+                }
+            });
+        self.update_popup = open;
+        if install {
+            let release = release.clone();
+            let (tx, rx) = mpsc::channel();
+            let ctx = ctx.clone();
+            thread::spawn(move || {
+                let _ = tx.send(update::install(&release));
+                ctx.request_repaint();
+            });
+            self.update_rx = Some(rx);
+        }
     }
 
     fn header_ui(&mut self, ui: &mut egui::Ui, rect: Rect, pal: &Pal, overlay: bool) {
@@ -472,6 +601,9 @@ impl Launcher {
             .on_hover_text("Déplacer la fenêtre");
         if drag.drag_started_by(egui::PointerButton::Primary) {
             ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+        }
+        if drag.drag_started() || drag.dragged() {
+            self.drag_grace_until = Some(Instant::now() + Duration::from_secs(5));
         }
         for x in [20.0, 26.0] {
             for y in [-4.0, 0.0, 4.0] {
@@ -719,6 +851,10 @@ impl Launcher {
         let Some(e) = self.selected().cloned() else {
             return;
         };
+        if e.kind == Kind::Remote && !self.ssh_states.contains_key(&e.key) {
+            self.probe_remote(ui.ctx(), &e.key);
+        }
+        let ssh_state = self.ssh_states.get(&e.key).copied().flatten();
         let dest = self.dest_for(&e);
         let inner = rect.shrink2(vec2(18.0, 14.0));
         let mut child = ui.new_child(
@@ -752,6 +888,7 @@ impl Launcher {
             ui.add_space(8.0);
         };
         let scroll_h = inner.bottom() - ui.cursor().top() - 48.0;
+        let mut retry = false;
         ScrollArea::vertical()
             .id_salt("details")
             .max_height(scroll_h.max(40.0))
@@ -769,6 +906,24 @@ impl Launcher {
                     field(ui, "Serveur", &e.owner);
                     field(ui, "Chemin", &e.description);
                     field(ui, "Adresse", &e.key);
+                    let (label, explanation) = match ssh_state {
+                        Some(sources::SshStatus::Ready) => ("Connexion prête", "Serveur et dossier accessibles."),
+                        Some(sources::SshStatus::AuthenticationRejected) => ("Authentification refusée", "Le contrôle sans invite a échoué. Vous pouvez tout de même ouvrir un terminal pour saisir un mot de passe ou choisir une clé SSH."),
+                        Some(sources::SshStatus::HostKeyChanged) => ("Clé d'hôte modifiée", "Vérifiez l'empreinte du serveur par un canal fiable avant de modifier known_hosts. zrepo-rs n'accepte ni ne supprime cette clé automatiquement."),
+                        Some(sources::SshStatus::HostKeyUnverified) => ("Clé d'hôte non approuvée", "Vérifiez l'empreinte du serveur par un canal fiable avant de l'accepter dans SSH."),
+                        Some(sources::SshStatus::MissingPath) => ("Dossier distant introuvable", "Vérifiez que le chemin existe et que votre compte peut y accéder."),
+                        Some(sources::SshStatus::Unavailable) => ("Serveur inaccessible", "Vérifiez le réseau, le nom d'hôte et le port SSH."),
+                        None => ("Vérification SSH…", "Le contrôle s'effectue en arrière-plan."),
+                    };
+                    field(ui, "Connexion", label);
+                    ui.label(RichText::new(explanation).size(12.0).color(pal.weak));
+                    if ui.small_button("Réessayer").clicked() { retry = true; }
+                    if ssh_state.is_some_and(|s| s != sources::SshStatus::Ready)
+                        && ui.small_button("Copier le diagnostic SSH").clicked()
+                        && let Some(host) = e.key.strip_prefix("ssh://").and_then(|s| s.split_once('/')).map(|(h, _)| h)
+                        && host.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@' | ':' | '[' | ']')) {
+                        ui.ctx().copy_text(format!("ssh -vv {host}"));
+                    }
                 }
                 Kind::Github => {
                     field(ui, "Dépôt", &format!("github.com/{}", e.key));
@@ -793,6 +948,9 @@ impl Launcher {
                     }
                 }
             });
+        if retry {
+            self.probe_remote(ui.ctx(), &e.key);
+        }
 
         let btn = Rect::from_min_max(pos2(inner.left(), inner.bottom() - 36.0), inner.max);
         let label = format!("Ouvrir dans {}", self.target.label(&self.cfg));
@@ -900,10 +1058,22 @@ impl Launcher {
     /// À droite : message temporaire, chargement ou avertissements.
     fn footer_status(&mut self, ui: &mut egui::Ui, pal: &Pal) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if self
+                .update_status
+                .as_ref()
+                .and_then(|s| s.available.as_ref())
+                .is_some()
+                && ui.small_button("Nouvelle version").clicked()
+            {
+                self.update_popup = true;
+            }
             let now = ui.input(|i| i.time);
             let mut warnings: Vec<String> = self.remote_warnings.clone();
             if let Some(g) = &self.github_error {
                 warnings.push(format!("GitHub : {g}"));
+            }
+            if let Some(u) = &self.update_error {
+                warnings.push(format!("Mise à jour : {u}"));
             }
             if let Some((msg, until)) = &self.notice
                 && now < *until

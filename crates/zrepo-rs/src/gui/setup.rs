@@ -1190,6 +1190,11 @@ impl Setup {
                         Some(sources::SshStatus::HostKeyChanged) => {
                             "clé d'hôte modifiée — vérifier"
                         }
+                        Some(sources::SshStatus::HostKeyUnverified) => "clé d'hôte non approuvée",
+                        Some(sources::SshStatus::AuthenticationRejected) => {
+                            "authentification à vérifier"
+                        }
+                        Some(sources::SshStatus::MissingPath) => "dossier distant introuvable",
                         Some(sources::SshStatus::Unavailable) => "connexion à vérifier",
                         None => "vérification…",
                     })
@@ -1371,6 +1376,10 @@ impl Setup {
             self.refresh_targets();
         }
         ui.checkbox(&mut self.cfg.github.enabled, "Afficher mes dépôts GitHub");
+        ui.checkbox(
+            &mut self.cfg.updates.enabled,
+            "Vérifier les nouvelles versions de zrepo-rs",
+        );
         ui.checkbox(
             &mut self.cfg.remote.enabled,
             "Afficher les projets de mes serveurs (configurés ici et dans Zed)",

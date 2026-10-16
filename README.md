@@ -141,6 +141,14 @@ Au premier lancement (ou avec `zrepo-rs setup`), l'assistant vous guide :
 | `zrepo-rs list [--refresh]` | liste au format TSV |
 | `zrepo-rs open <clé> [--with <cible>]` | ouvre un projet sans la fenêtre |
 | `zrepo-rs doctor` | diagnostic (dépendances, cibles détectées, GitHub) |
+| `zrepo-rs update` | affiche la version installée et la dernière release stable |
+| `zrepo-rs update --install` | installe cette release après vérification SHA-256 |
+
+Le lanceur vérifie aussi les nouvelles versions en arrière-plan. Lorsqu'une release stable est
+disponible, « Nouvelle version » affiche les changements et un lien vers GitHub ; l'installation
+ne démarre qu'après un clic sur « Installer cette version ». La vérification peut être désactivée
+dans les réglages. L'installateur reprend le dossier du binaire actuel, conserve `config.toml`
+et ne touche pas à l'ancien programme `zrepo`.
 
 Cibles de `--with` : `zed`, `herdr`, `terminal`, `vscode`, `cursor`, `windsurf`, `sublime`,
 `idea`, `pycharm`, `webstorm`, `phpstorm`, `rustrover`, ou le nom d'un éditeur que vous avez
@@ -175,6 +183,10 @@ cache_ttl = 600                 # secondes
 
 [github]
 enabled = true
+
+[updates]
+enabled = true                # désactiver pour ne jamais vérifier les releases
+cache_ttl = 86400             # secondes entre deux vérifications automatiques
 
 [remote]
 enabled = true
@@ -211,8 +223,15 @@ la détection automatique.
 
 À l'étape **Serveurs**, l'assistant lit les alias de `~/.ssh/config` et les connexions Zed,
 vérifie leur connexion SSH sans demander de mot de passe, puis permet de les ajouter en un clic.
+Les directives `Include` sont parcourues, y compris les motifs glob et les chemins relatifs à
+`~/.ssh`. L'assistant reprend aussi les serveurs déjà configurés.
 Un serveur hors ligne peut quand même être ajouté. Les chemins de projets sont facultatifs ;
 **Ctrl-R** recherche les dépôts Git sur les serveurs configurés.
+
+Dans le lanceur, le détail d'un projet distant affiche l'état de sa connexion SSH et permet de
+relancer le contrôle. Ce contrôle sans invite n'empêche pas l'ouverture interactive du terminal.
+En cas de clé d'hôte modifiée, vérifiez son empreinte par un canal fiable avant toute modification
+de `known_hosts`.
 
 Les variables d'environnement ont priorité sur le fichier : `ZREPO_RS_PROJECTS_DIR`,
 `ZREPO_RS_CACHE_TTL`, etc. Pour GitHub, `GITHUB_TOKEN` ou `ZREPO_RS_GITHUB_TOKEN` passent avant

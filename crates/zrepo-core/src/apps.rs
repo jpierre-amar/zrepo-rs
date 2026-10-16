@@ -432,7 +432,7 @@ fn remote_terminal_process(app: &App, ssh: &Path, host: &str, remote_command: &s
         return false;
     }
     let line = format!(
-        "{} -tt {} {}",
+        "{} -tt {} {}; status=$?; if [ \"$status\" -ne 0 ]; then printf '\\nConnexion SSH échouée (code %s). Appuyez sur Entrée pour garder le terminal ouvert.\\n' \"$status\"; read -r _; exec \"${{SHELL:-/bin/sh}}\"; fi",
         shell_quote(&ssh.to_string_lossy()),
         shell_quote(host),
         shell_quote(remote_command)
@@ -467,7 +467,13 @@ fn remote_terminal_process(app: &App, ssh: &Path, host: &str, remote_command: &s
     };
     let mut args = prefix.to_vec();
     let ssh = ssh.to_string_lossy();
-    args.extend([ssh.as_ref(), "-tt", host, remote_command]);
+    let line = format!(
+        "{} -tt {} {}; status=$?; if [ \"$status\" -ne 0 ]; then printf '\\nConnexion SSH échouée (code %s). Appuyez sur Entrée pour garder le terminal ouvert.\\n' \"$status\"; read -r _; exec \"${{SHELL:-/bin/sh}}\"; fi",
+        shell_quote(&ssh),
+        shell_quote(host),
+        shell_quote(remote_command)
+    );
+    args.extend(["sh", "-c", &line]);
     sys::spawn_detached(&app.program, &args)
 }
 

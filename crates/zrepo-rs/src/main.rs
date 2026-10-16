@@ -49,6 +49,10 @@ fn run(cmd: cli::Command) -> i32 {
             attach_console();
             cli::doctor()
         }
+        Command::Update { install } => {
+            attach_console();
+            cli::update(install)
+        }
         Command::Help => {
             attach_console();
             println!("{}", cli::USAGE);
