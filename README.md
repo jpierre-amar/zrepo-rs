@@ -1,28 +1,56 @@
 # zrepo-rs
 
-Lanceur de projets pour **Linux**, **macOS** et **Windows**. Une fenêtre flottante
-(dans l'esprit de Raycast ou Spotlight) réunit :
+[Français](#français) · [English](#english)
 
-- vos **projets locaux** (le dossier des projets, `~/Projects` par défaut) ;
-- vos **projets distants**, déclarés dans l'assistant ou dans les `ssh_connections` de Zed ;
-- vos **dépôts GitHub** (les vôtres, ceux où vous êtes collaborateur et ceux de vos organisations).
+## Français
 
-Tapez quelques lettres (recherche floue) puis Entrée : le projet s'ouvre dans la cible de
-votre choix :
+**zrepo-rs** est un lanceur de projets open source, écrit en Rust, pour **Linux**,
+**macOS** et **Windows**. Sa fenêtre flottante rassemble vos projets et vous permet
+de retrouver le bon dépôt en quelques frappes grâce à la recherche floue.
 
-- un **terminal** ouvert dans le dossier du projet (Windows Terminal ou PowerShell, Terminal.app,
-  votre terminal Linux) ;
-- **votre éditeur** : VS Code, Cursor, Windsurf, Sublime Text et les IDE JetBrains sont détectés,
-  et n'importe quel autre exécutable s'ajoute depuis l'assistant ;
-- **Zed** ;
-- **Herdr** avec un agent (`codex --yolo`), hors Windows.
+Il réunit au même endroit :
 
-Un dépôt GitHub absent en local est cloné d'abord, sans passer par `gh`.
+- les **projets locaux** de votre dossier de travail (`~/Projects` par défaut) ;
+- les **projets distants** accessibles en SSH, déclarés dans l'assistant ou dans
+  les connexions de Zed ;
+- les **dépôts GitHub** de votre compte, de vos collaborations et de vos organisations.
 
-`zrepo-rs` est une application distincte de l'ancien `zrepo`. Son exécutable,
-sa configuration, son cache, son entrée de trousseau et ses raccourcis portent
-tous le nom `zrepo-rs` : l'installation ne remplace ni ne modifie l'ancienne
-application.
+Choisissez un projet puis, selon son type, ouvrez-le dans **Zed**, un **terminal**
+ou votre **éditeur préféré** (VS Code, Cursor, Windsurf, Sublime Text, IDE
+JetBrains ou un exécutable personnalisé). **Herdr** peut aussi lancer un agent
+sur Linux et macOS. Si un dépôt GitHub n'est pas encore présent sur votre machine,
+zrepo-rs le clone avant de l'ouvrir. L'assistant de configuration facilite le
+choix des dossiers, des serveurs et des outils ; un jeton GitHub enregistré
+dans l'application est conservé dans le trousseau du système.
+
+L'application possède ses propres fichiers, raccourcis et paramètres : elle
+s'installe à côté de l'ancien `zrepo` sans le remplacer.
+
+## English
+
+**zrepo-rs** is an open source project launcher written in Rust for **Linux**,
+**macOS**, and **Windows**. Its floating window brings your projects together,
+so you can find the right repository in a few keystrokes with fuzzy search.
+
+It brings together:
+
+- **local projects** from your projects directory (`~/Projects` by default);
+- **remote projects** reachable over SSH, added in the setup wizard or imported
+  from Zed's connections;
+- **GitHub repositories** you own, collaborate on, or access through organizations.
+
+Select a project and, depending on its type, open it in **Zed**, a **terminal**,
+or your **preferred editor** (including VS Code, Cursor, Windsurf, Sublime Text,
+JetBrains IDEs, and custom executables). On Linux and macOS, **Herdr** can also
+launch an agent.
+If a GitHub repository is not on your machine yet, zrepo-rs clones it before
+opening it. The setup wizard helps configure project folders, servers, and
+tools; a GitHub token saved in the app is stored in the operating system's
+keyring.
+
+The app has its own files, shortcuts, and settings. It installs alongside the
+older `zrepo` without replacing it. The application interface is currently in
+French.
 
 ![Fenêtre de zrepo-rs](docs/screenshots/lanceur.png)
 
