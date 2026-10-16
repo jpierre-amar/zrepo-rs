@@ -1,26 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>zrepo-rs</title>
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#6D5DFC"/>
-      <stop offset="1" stop-color="#1FB6C9"/>
+    <linearGradient id="tile" x1="24" y1="16" x2="224" y2="240" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4A3CC1"/>
+      <stop offset="0.52" stop-color="#30277F"/>
+      <stop offset="1" stop-color="#171C43"/>
     </linearGradient>
-    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
-      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0"/>
-    </linearGradient>
-    <linearGradient id="bolt" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFE27A"/>
-      <stop offset="1" stop-color="#FFB020"/>
+    <linearGradient id="mark" x1="66" y1="70" x2="190" y2="190" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="0.55" stop-color="#E9EAFF"/>
+      <stop offset="1" stop-color="#B8F6F2"/>
     </linearGradient>
   </defs>
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#shine)"/>
-  <!-- dossier -->
-  <path d="M56 86 a14 14 0 0 1 14 -14 h38 l16 16 h62 a14 14 0 0 1 14 14 v76 a14 14 0 0 1 -14 14 H70 a14 14 0 0 1 -14 -14 Z"
-        fill="#FFFFFF" fill-opacity="0.95"/>
-  <path d="M56 108 h144 v70 a14 14 0 0 1 -14 14 H70 a14 14 0 0 1 -14 -14 Z" fill="#FFFFFF"/>
-  <!-- z stylisé en éclair -->
-  <path d="M100 118 h58 l-34 34 h30 l-52 30 l22 -30 h-28 l34 -34 h-30 Z"
-        fill="url(#bolt)" stroke="#3B2FB8" stroke-width="5" stroke-linejoin="round"/>
+
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#tile)"/>
+
+  <!-- A broad, continuous Z stays clear in a 16 px taskbar icon. -->
+  <path d="M75 77h106c6 0 9 7 5 11L73 174c-5 4-2 12 5 12h105"
+        fill="none" stroke="url(#mark)" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+
 </svg>
