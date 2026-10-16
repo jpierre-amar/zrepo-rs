@@ -105,6 +105,16 @@ ont réussi sur leurs plateformes respectives.
 
 Le test manuel du Device Flow et de l'ouverture dans l'éditeur sur Linux reste suivi dans l'issue #8.
 
+## Release v0.3.1
+
+Correctif du parcours des réglages : depuis le lanceur, Ctrl+, ouvre directement
+« Cibles » et l'étape « Serveurs » permet de poursuivre vers « Cibles ».
+Le [workflow de publication](https://github.com/jpierre-amar/zrepo-rs/actions/runs/38883926175)
+a réussi sur les cinq cibles. La release `v0.3.1` est stable et « Latest ».
+Les 19 fichiers listés dans `SHA256SUMS` ont été téléchargés et vérifiés ;
+le binaire Windows publié affiche `zrepo-rs 0.3.1` et a été installé localement
+avec une empreinte SHA-256 identique à celle de l'archive.
+
 ## Sécurité
 
 - Le jeton GitHub est stocké sous le service de trousseau `zrepo-rs`.
