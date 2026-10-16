@@ -54,7 +54,7 @@ Il n'utilise jamais `sudo`. Options, à passer après `sh -s --` :
 
 ```sh
 curl -fsSL https://github.com/jpierre-amar/zrepo-rs/releases/latest/download/install.sh \
-  | sh -s -- --yes --dir ~/bin --version v0.2.0 --no-setup
+  | sh -s -- --yes --dir ~/bin --version v0.3.0 --no-setup
 ```
 
 | Option | Variable | Effet |
@@ -128,8 +128,9 @@ Au premier lancement (ou avec `zrepo-rs setup`), l'assistant vous guide :
    compte `github`), jamais dans un fichier.
 3. **Cibles** : outils détectés (Zed, Herdr, terminal, éditeurs connus), ajout de vos propres
    éditeurs (« Ajouter un éditeur… » puis choix de l'exécutable), cible par défaut.
-4. **Raccourci clavier** (voir plus bas).
-5. Enregistrement de `config.toml`.
+4. **Serveurs** : découverte des alias SSH et des connexions Zed, puis ajout des serveurs et chemins de projets.
+5. **Raccourci clavier** (voir plus bas).
+6. Enregistrement de `config.toml`.
 
 ## Utilisation
 
@@ -353,7 +354,7 @@ Non documentées dans `--help`, elles servent aux captures d'écran et aux tests
 2. Puis :
 
 ```sh
-git tag v0.2.0 && git push --tags
+git tag v0.3.0 && git push origin v0.3.0
 ```
 
 Le workflow `release.yml` compile les 5 cibles, construit le setup Windows avec Inno Setup
