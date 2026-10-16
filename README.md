@@ -54,7 +54,7 @@ Il n'utilise jamais `sudo`. Options, à passer après `sh -s --` :
 
 ```sh
 curl -fsSL https://github.com/jpierre-amar/zrepo-rs/releases/latest/download/install.sh \
-  | sh -s -- --yes --dir ~/bin --version v0.3.1 --no-setup
+  | sh -s -- --yes --dir ~/bin --version v0.3.2 --no-setup
 ```
 
 | Option | Variable | Effet |
@@ -375,7 +375,7 @@ Non documentées dans `--help`, elles servent aux captures d'écran et aux tests
 2. Puis :
 
 ```sh
-git tag v0.3.1 && git push origin v0.3.1
+git tag v0.3.2 && git push origin v0.3.2
 ```
 
 Le workflow `release.yml` compile les 5 cibles, construit le setup Windows avec Inno Setup
