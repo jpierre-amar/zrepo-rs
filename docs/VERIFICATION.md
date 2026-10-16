@@ -88,6 +88,23 @@ raccourci dans le menu Démarrer. Le binaire Windows a donc été testé directe
 depuis l'archive ; l'installeur est couvert par le job CI
 `installeurs (windows-latest)`.
 
+## Release v0.3.0
+
+Publiée le 16 octobre 2026 depuis le commit de fusion `79cd86e` de la PR #10.
+La [CI sur `main`](https://github.com/jpierre-amar/zrepo-rs/actions/runs/38880965760)
+et le [workflow de publication](https://github.com/jpierre-amar/zrepo-rs/actions/runs/38882106605)
+ont réussi sur leurs plateformes respectives.
+
+| Contrôle | Résultat |
+|---|---|
+| Release `v0.3.0` | publiée, stable et « Latest » |
+| Artefacts | 20 fichiers : cinq archives, cinq sommes individuelles, setup Windows et sa somme, `SHA256SUMS`, installeurs et fichiers d'intégration |
+| Sommes SHA-256 | les 19 fichiers listés dans `SHA256SUMS` ont été téléchargés et vérifiés indépendamment |
+| Binaire Windows de l'archive | `--version` affiche `zrepo-rs 0.3.0` |
+| Setup Windows | métadonnée `ProductVersion = 0.3.0` ; fabrication et test silencieux couverts par la CI |
+
+Le test manuel du Device Flow et de l'ouverture dans l'éditeur sur Linux reste suivi dans l'issue #8.
+
 ## Sécurité
 
 - Le jeton GitHub est stocké sous le service de trousseau `zrepo-rs`.
