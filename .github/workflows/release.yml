@@ -156,6 +156,22 @@ jobs:
           Set-Content -Path "dist/$name.zip.sha256" -Value "$h  $name.zip" -Encoding ascii -NoNewline
           Get-Content "dist/$name.zip.sha256"
 
+      - name: Setup .exe (Windows, Inno Setup)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y; if ($LASTEXITCODE) { exit 1 } }
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $exe = Resolve-Path "target/${{ matrix.target }}/release/zrepo-rs.exe"
+          & $iscc /Q "/DAppVersion=$version" "/DSourceExe=$exe" packaging\windows\zrepo-rs.iss
+          if ($LASTEXITCODE) { throw "ISCC a échoué ($LASTEXITCODE)" }
+          $setup = 'zrepo-rs-setup-x86_64.exe'
+          $h = (Get-FileHash "dist/$setup" -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "dist/$setup.sha256" -Value "$h  $setup" -Encoding ascii -NoNewline
+          Get-Content "dist/$setup.sha256"
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist-${{ matrix.target }}
@@ -196,6 +212,10 @@ jobs:
           test -f "$win.sha256"
           sha256sum -c "$win.sha256"
           test "$(unzip -Z1 "$win" | sort)" = "$(printf '%s\n' LICENSE zrepo-rs.exe | sort)"
+          setup=zrepo-rs-setup-x86_64.exe
+          test -f "$setup"
+          test -f "$setup.sha256"
+          sha256sum -c "$setup.sha256"
           # Ces sommes détectent une corruption après publication. Comme elles sont
           # cohébergées avec les assets, elles ne remplacent pas une signature de provenance.
           sha256sum -- * | grep -v ' SHA256SUMS$' > SHA256SUMS

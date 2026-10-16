@@ -4,12 +4,20 @@ Lanceur de projets pour **Linux**, **macOS** et **Windows**. Une fenêtre flotta
 (dans l'esprit de Raycast ou Spotlight) réunit :
 
 - vos **projets locaux** (le dossier des projets, `~/Projects` par défaut) ;
-- vos **projets distants**, déclarés dans les `ssh_connections` de Zed ;
+- vos **projets distants**, déclarés dans l'assistant ou dans les `ssh_connections` de Zed ;
 - vos **dépôts GitHub** (les vôtres, ceux où vous êtes collaborateur et ceux de vos organisations).
 
-Tapez quelques lettres (recherche floue) puis Entrée : le projet s'ouvre dans **Zed**, ou dans
-**Herdr** avec un agent (`codex --yolo`) si Herdr est installé. Un dépôt GitHub absent en
-local est cloné d'abord, sans passer par `gh`.
+Tapez quelques lettres (recherche floue) puis Entrée : le projet s'ouvre dans la cible de
+votre choix :
+
+- un **terminal** ouvert dans le dossier du projet (Windows Terminal ou PowerShell, Terminal.app,
+  votre terminal Linux) ;
+- **votre éditeur** : VS Code, Cursor, Windsurf, Sublime Text et les IDE JetBrains sont détectés,
+  et n'importe quel autre exécutable s'ajoute depuis l'assistant ;
+- **Zed** ;
+- **Herdr** avec un agent (`codex --yolo`), hors Windows.
+
+Un dépôt GitHub absent en local est cloné d'abord, sans passer par `gh`.
 
 `zrepo-rs` est une application distincte de l'ancien `zrepo`. Son exécutable,
 sa configuration, son cache, son entrée de trousseau et ses raccourcis portent
@@ -46,7 +54,7 @@ Il n'utilise jamais `sudo`. Options, à passer après `sh -s --` :
 
 ```sh
 curl -fsSL https://github.com/jpierre-amar/zrepo-rs/releases/latest/download/install.sh \
-  | sh -s -- --yes --dir ~/bin --version v0.2.0 --no-setup
+  | sh -s -- --yes --dir ~/bin --version v0.3.0 --no-setup
 ```
 
 | Option | Variable | Effet |
@@ -58,16 +66,32 @@ curl -fsSL https://github.com/jpierre-amar/zrepo-rs/releases/latest/download/ins
 
 ### Windows
 
-Dans PowerShell (5.1 ou 7) :
+Téléchargez **`zrepo-rs-setup-x86_64.exe`** depuis la
+[dernière release](https://github.com/jpierre-amar/zrepo-rs/releases/latest) et lancez-le.
+L'installation se fait pour votre compte, **sans droits administrateur** :
+
+1. `zrepo-rs.exe` dans `%LOCALAPPDATA%\Programs\zrepo-rs` ;
+2. un raccourci dans le menu Démarrer (et sur le Bureau si vous le demandez) ;
+3. l'ajout au `PATH` de l'utilisateur (case cochée par défaut), pour la commande `zrepo-rs` ;
+4. une entrée dans **Paramètres → Applications installées**, pour désinstaller ;
+5. le lancement de l'assistant `zrepo-rs setup` à la fin.
+
+Le setup n'est pas signé : Windows SmartScreen peut afficher « Windows a protégé votre
+ordinateur ». Cliquez sur « Informations complémentaires » puis « Exécuter quand même ».
+Installation silencieuse : `zrepo-rs-setup-x86_64.exe /VERYSILENT /TASKS=addtopath`.
+Seul Windows x64 est pris en charge pour l'instant.
+
+#### Par script PowerShell
+
+Pour les scripts et le déploiement, dans PowerShell (5.1 ou 7) :
 
 ```powershell
 irm https://github.com/jpierre-amar/zrepo-rs/releases/latest/download/install.ps1 | iex
 ```
 
-L'installeur télécharge l'archive, vérifie sa somme SHA-256, installe `zrepo-rs.exe` dans
-`%LOCALAPPDATA%\Programs\zrepo-rs` (le dossier est demandé), ajoute ce dossier au `PATH`
-de l'utilisateur, crée un raccourci dans le menu Démarrer puis lance `zrepo-rs setup`.
-Seul Windows x64 est pris en charge pour l'instant.
+Le script télécharge l'archive, vérifie sa somme SHA-256, installe `zrepo-rs.exe` au même
+endroit que le setup (le dossier est demandé), ajoute ce dossier au `PATH` de l'utilisateur,
+crée un raccourci dans le menu Démarrer puis lance `zrepo-rs setup`.
 
 Avec des paramètres (`-Yes`, `-Dir`, `-Version`, `-NoSetup`) :
 
@@ -79,9 +103,10 @@ Les variables `ZREPO_RS_INSTALL_DIR` et `ZREPO_RS_VERSION` fonctionnent aussi.
 
 ### Vérification manuelle
 
-Chaque release publie `zrepo-rs-<cible>.tar.gz` (ou `.zip`), le fichier `.sha256` associé et
-un récapitulatif `SHA256SUMS`. Cibles : `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`,
-`x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`.
+Chaque release publie `zrepo-rs-<cible>.tar.gz` (ou `.zip`), le setup Windows
+`zrepo-rs-setup-x86_64.exe`, le fichier `.sha256` de chacun et un récapitulatif `SHA256SUMS`.
+Cibles : `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`,
+`aarch64-apple-darwin`, `x86_64-pc-windows-msvc`.
 
 ### Depuis les sources
 
@@ -101,9 +126,11 @@ Au premier lancement (ou avec `zrepo-rs setup`), l'assistant vous guide :
    github.com » fait le reste), ou un jeton personnel collé, ou le jeton de `gh` s'il est connecté,
    ou « Plus tard ». Le jeton est rangé dans le **trousseau du système** (service `zrepo-rs`,
    compte `github`), jamais dans un fichier.
-3. **Cibles** : Zed et Herdr détectés ou non, cible par défaut.
-4. **Raccourci clavier** (voir plus bas).
-5. Enregistrement de `config.toml`.
+3. **Cibles** : outils détectés (Zed, Herdr, terminal, éditeurs connus), ajout de vos propres
+   éditeurs (« Ajouter un éditeur… » puis choix de l'exécutable), cible par défaut.
+4. **Serveurs** : découverte des alias SSH et des connexions Zed, puis ajout des serveurs et chemins de projets.
+5. **Raccourci clavier** (voir plus bas).
+6. Enregistrement de `config.toml`.
 
 ## Utilisation
 
@@ -112,11 +139,18 @@ Au premier lancement (ou avec `zrepo-rs setup`), l'assistant vous guide :
 | `zrepo-rs` | ouvre la fenêtre de lancement |
 | `zrepo-rs setup` | relance l'assistant |
 | `zrepo-rs list [--refresh]` | liste au format TSV |
-| `zrepo-rs open <clé> [--with zed\|herdr]` | ouvre un projet sans la fenêtre |
-| `zrepo-rs doctor` | diagnostic |
+| `zrepo-rs open <clé> [--with <cible>]` | ouvre un projet sans la fenêtre |
+| `zrepo-rs doctor` | diagnostic (dépendances, cibles détectées, GitHub) |
+
+Cibles de `--with` : `zed`, `herdr`, `terminal`, `vscode`, `cursor`, `windsurf`, `sublime`,
+`idea`, `pycharm`, `webstorm`, `phpstorm`, `rustrover`, ou le nom d'un éditeur que vous avez
+ajouté. Sans `--with`, la cible par défaut est utilisée. Les projets distants (`ssh://`)
+s'ouvrent dans Zed, Herdr ou un terminal SSH. Le terminal lance un shell dans le dossier
+du projet sur le serveur, en utilisant l'alias et les clés de votre configuration SSH.
 
 Dans la fenêtre : **Entrée** ouvre, **Ctrl-E** ouvre dans Zed, **Ctrl-Y** dans Herdr,
-**Tab** change de cible, **Ctrl-R** rafraîchit, **Ctrl-1** à **Ctrl-4** choisissent le filtre
+**Ctrl-T** dans un terminal, **Tab** change de cible, **Ctrl-R** rafraîchit,
+**Ctrl-1** à **Ctrl-4** choisissent le filtre
 (Tous, Locaux, Serveurs, GitHub), **Ctrl-,** ouvre les réglages, **Échap** ferme.
 Faites glisser la poignée à six points, à gauche du champ de recherche, pour déplacer la fenêtre.
 La fenêtre se ferme aussi quand elle perd le focus, sauf pendant un clonage ou
@@ -146,6 +180,11 @@ zed_settings = ""               # vide = emplacement Zed par défaut
 scan_depth = 3
 ssh_timeout = 8
 
+[[remote.servers]]              # facultatif : serveur ajouté dans l'assistant
+host = "mon-serveur"            # alias de ~/.ssh/config ou utilisateur@hôte
+label = "Production"
+paths = ["/home/moi/projet"]    # facultatif : sans chemin, Ctrl-R lance un scan Git
+
 [herdr]
 enabled = true
 agent = "codex"
@@ -153,8 +192,25 @@ args = ["--yolo"]
 wait = 20
 
 [ui]
-default_target = "zed"          # "zed" ou "herdr"
+default_target = "terminal"     # "zed", "herdr", "terminal", "vscode", ou le nom d'un éditeur
+
+[terminal]                      # facultatif : vide = détection automatique
+command = ""                    # par ex. "wezterm", ou un chemin complet
+args = []                       # {path} = dossier du projet ; le terminal y démarre de toute façon
+
+[[editors]]                     # autant de blocs que d'éditeurs ajoutés
+name = "Mon IDE"
+command = 'C:\outils\ide.exe'   # chemin complet, ou un nom présent dans le PATH
+args = ["--new-window", "{path}"]   # sans {path}, le dossier est ajouté à la fin
 ```
+
+Un éditeur ajouté porte le nom d'un éditeur connu (« VS Code »…) ? Votre déclaration remplace
+la détection automatique.
+
+À l'étape **Serveurs**, l'assistant lit les alias de `~/.ssh/config` et les connexions Zed,
+vérifie leur connexion SSH sans demander de mot de passe, puis permet de les ajouter en un clic.
+Un serveur hors ligne peut quand même être ajouté. Les chemins de projets sont facultatifs ;
+**Ctrl-R** recherche les dépôts Git sur les serveurs configurés.
 
 Les variables d'environnement ont priorité sur le fichier : `ZREPO_RS_PROJECTS_DIR`,
 `ZREPO_RS_CACHE_TTL`, etc. Pour GitHub, `GITHUB_TOKEN` ou `ZREPO_RS_GITHUB_TOKEN` passent avant
@@ -235,7 +291,11 @@ rm -rf ~/Applications/zrepo-rs.app
 rm -rf ~/Library/Application\ Support/zrepo-rs ~/Library/Caches/zrepo-rs   # facultatif
 ```
 
-Windows (PowerShell) :
+Windows, installé par le setup : **Paramètres → Applications → Applications installées →
+zrepo-rs → Désinstaller**. La configuration, le cache et le jeton GitHub sont conservés ;
+supprimez `%APPDATA%\zrepo-rs` et `%LOCALAPPDATA%\zrepo-rs` pour les effacer.
+
+Windows, installé par `install.ps1` (PowerShell) :
 
 ```powershell
 $d = "$env:LOCALAPPDATA\Programs\zrepo-rs"
@@ -294,10 +354,11 @@ Non documentées dans `--help`, elles servent aux captures d'écran et aux tests
 2. Puis :
 
 ```sh
-git tag v0.2.0 && git push --tags
+git tag v0.3.0 && git push origin v0.3.0
 ```
 
-Le workflow `release.yml` compile les 5 cibles, publie les archives, leurs `.sha256`, `SHA256SUMS`,
+Le workflow `release.yml` compile les 5 cibles, construit le setup Windows avec Inno Setup
+(`packaging/windows/zrepo-rs.iss`), publie les archives, le setup, leurs `.sha256`, `SHA256SUMS`,
 `install.sh`, `install.ps1` et les fichiers d'intégration (`zrepo-rs.desktop`, `zrepo-rs.png`, `zrepo-rs.ico`,
 `Info.plist.in`). Un tag contenant un tiret (`v0.3.0-rc.1`) donne une pré-release.
 

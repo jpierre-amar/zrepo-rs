@@ -1,7 +1,7 @@
 //! Interface graphique (eframe/egui) : la fenêtre de lancement et l'assistant.
 //!
 //! Variables cachées, pour le débogage et les captures d'écran :
-//! - `ZREPO_RS_DEBUG_SETUP_STEP=n` : l'assistant s'ouvre à l'étape n (1 à 6) ;
+//! - `ZREPO_RS_DEBUG_SETUP_STEP=n` : l'assistant s'ouvre à l'étape n (1 à 7) ;
 //! - `ZREPO_RS_DEBUG_KEEP_OPEN=1` : le lanceur ne se ferme pas en perdant le focus ;
 //! - `ZREPO_RS_DEBUG_QUERY=texte` : recherche pré-remplie ;
 //! - `ZREPO_RS_DEBUG_THEME=light|dark` : force le thème ;
@@ -174,6 +174,7 @@ impl App {
     fn spawn_launcher() {
         if let Ok(exe) = std::env::current_exe() {
             let _ = Command::new(exe)
+                .arg("--refresh")
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -219,6 +220,7 @@ impl App {
         let ctx = ui.ctx().clone();
         let Some(l) = &mut self.launcher else { return };
         let mut settings = false;
+        let mut servers_settings = false;
         for (k, m) in std::mem::take(&mut self.keys) {
             match l.on_key(&ctx, k, m) {
                 launcher::Action::Close(code) => {
@@ -226,6 +228,7 @@ impl App {
                     ctx.send_viewport_cmd(ViewportCommand::Close);
                 }
                 launcher::Action::Settings => settings = true,
+                launcher::Action::SettingsServers => servers_settings = true,
                 launcher::Action::None => {}
             }
         }
@@ -235,10 +238,15 @@ impl App {
                 ctx.send_viewport_cmd(ViewportCommand::Close);
             }
             launcher::Action::Settings => settings = true,
+            launcher::Action::SettingsServers => servers_settings = true,
             launcher::Action::None => {}
         }
-        if settings {
-            self.setup = Some(Setup::new(&ctx, l.cfg.clone(), true));
+        if settings || servers_settings {
+            let mut setup = Setup::new(&ctx, l.cfg.clone(), true);
+            if servers_settings {
+                setup.show_servers(&ctx);
+            }
+            self.setup = Some(setup);
             return;
         }
 

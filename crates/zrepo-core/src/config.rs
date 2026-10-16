@@ -14,6 +14,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    apps::{EditorConfig, TerminalConfig},
     error::{EX_FAIL, Fail, Res},
     open::Target,
     sys,
@@ -29,6 +30,10 @@ pub struct Config {
     pub remote: RemoteConfig,
     pub herdr: HerdrConfig,
     pub ui: UiConfig,
+    pub terminal: TerminalConfig,
+    /// Editeurs ajoutes a la main (`[[editors]]`), en plus de ceux detectes.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub editors: Vec<EditorConfig>,
 
     /// Cache des depots GitHub (resolu, jamais ecrit dans le fichier).
     #[serde(skip)]
@@ -44,12 +49,23 @@ pub struct GithubConfig {
     pub enabled: bool,
 }
 
-/// Serveurs et projets distants : les ssh_connections de Zed, seule source
-/// de verite (pas de liste dupliquee ici).
+/// Serveurs ajoutes dans zrepo-rs, en plus des ssh_connections de Zed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteServer {
+    pub host: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+}
+
+/// Serveurs et projets distants, declares ici ou dans Zed.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RemoteConfig {
     pub enabled: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub servers: Vec<RemoteServer>,
     /// Vide = emplacement par defaut de l'OS (voir `zed_settings_path`).
     pub zed_settings: String,
     pub scan_depth: usize,
@@ -81,6 +97,7 @@ impl Default for RemoteConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            servers: Vec::new(),
             zed_settings: String::new(),
             scan_depth: 3,
             ssh_timeout: 8,
@@ -120,6 +137,8 @@ impl Default for Config {
             remote: RemoteConfig::default(),
             herdr: HerdrConfig::default(),
             ui: UiConfig::default(),
+            terminal: TerminalConfig::default(),
+            editors: Vec::new(),
             cache_file: cache.join("repos.tsv"),
             remote_cache_file: cache.join("remotes.tsv"),
         }
@@ -308,15 +327,49 @@ default_target = "herdr"
         assert_eq!(back.projects_dir, cfg.projects_dir);
         assert_eq!(back.herdr.args, cfg.herdr.args);
         assert_eq!(back.ui.default_target, Target::Zed);
+        assert!(!text.contains("editors"));
     }
 
+    /// Une cible inconnue n'est pas une erreur : ce peut etre un editeur
+    /// declare plus loin ou desinstalle depuis. Le lanceur se rabat alors
+    /// sur une cible disponible.
     #[test]
-    fn champ_inconnu_tolere_cible_invalide_refusee() {
+    fn champ_inconnu_et_cible_libre_toleres() {
         assert!(
             Config::parse("futur = 1\n[github]\nenabled = false\n")
                 .is_ok_and(|c| !c.github.enabled)
         );
-        assert!(Config::parse("[ui]\ndefault_target = \"vim\"\n").is_err());
+        let cfg = Config::parse("[ui]\ndefault_target = \"vim\"\n").unwrap();
+        assert_eq!(cfg.ui.default_target, Target::App("vim".into()));
+    }
+
+    #[test]
+    fn editeurs_et_terminal() {
+        let cfg = Config::parse(
+            r#"
+[ui]
+default_target = "terminal"
+[terminal]
+command = "kitty"
+args = ["--directory", "{path}"]
+[[editors]]
+name = "Mon IDE"
+command = "C:/outils/ide.exe"
+args = ["--open", "{path}"]
+[[editors]]
+name = "Vim"
+command = "gvim"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.ui.default_target, Target::Terminal);
+        assert_eq!(cfg.terminal.command, "kitty");
+        assert_eq!(cfg.editors.len(), 2);
+        assert_eq!(cfg.editors[0].args, vec!["--open", "{path}"]);
+        assert!(cfg.editors[1].args.is_empty());
+        let back = Config::parse(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
+        assert_eq!(back.editors, cfg.editors);
+        assert_eq!(back.terminal, cfg.terminal);
     }
 
     #[test]
@@ -325,5 +378,17 @@ default_target = "herdr"
         assert!(cfg.zed_settings_path().ends_with("settings.json"));
         cfg.remote.zed_settings = "/tmp/z.json".into();
         assert_eq!(cfg.zed_settings_path(), PathBuf::from("/tmp/z.json"));
+    }
+
+    #[test]
+    fn serveurs_manuels_survivent_a_la_serialisation() {
+        let cfg = Config::parse(
+            "[[remote.servers]]\nhost = 'VPSHost'\nlabel = 'Production'\npaths = ['/home/jp/app']\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.remote.servers[0].host, "VPSHost");
+        assert_eq!(cfg.remote.servers[0].paths, ["/home/jp/app"]);
+        let back = Config::parse(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
+        assert_eq!(back.remote.servers, cfg.remote.servers);
     }
 }

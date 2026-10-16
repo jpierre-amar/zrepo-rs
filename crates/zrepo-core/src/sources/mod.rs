@@ -21,6 +21,21 @@ pub fn remotes(cfg: &Config, refresh: bool) -> (Vec<Entry>, Vec<String>) {
     remote::entries(cfg, refresh)
 }
 
+/// Alias SSH et connexions Zed pouvant etre proposes dans l'assistant.
+pub fn ssh_hosts(cfg: &Config) -> Vec<String> {
+    remote::configured_hosts(cfg)
+}
+
+pub use remote::SshStatus;
+
+pub fn ssh_status(host: &str) -> SshStatus {
+    remote::ssh_status(host)
+}
+
+pub fn ssh_installed() -> bool {
+    crate::sys::has("ssh")
+}
+
 /// Depots du compte GitHub ; vide si GitHub est desactive.
 pub fn github(cfg: &Config, refresh: bool) -> Res<Vec<Entry>> {
     github::entries(cfg, refresh)

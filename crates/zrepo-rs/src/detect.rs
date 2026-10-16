@@ -3,11 +3,6 @@
 
 use std::{env, path::PathBuf};
 
-use zrepo_core::{
-    config::Config,
-    open::{Target, available_targets},
-};
-
 /// Premier exécutable du PATH portant ce nom (avec .exe sous Windows).
 pub fn which(bin: &str) -> Option<PathBuf> {
     let exts: &[&str] = if cfg!(windows) {
@@ -49,11 +44,10 @@ pub fn zed() -> Option<String> {
         .map(|p| p.display().to_string())
 }
 
-/// Herdr installé (indépendamment du réglage `herdr.enabled`) ?
+/// Herdr installé (indépendamment du réglage `herdr.enabled`) ? Jamais sous
+/// Windows, où zrepo-rs ne le pilote pas.
 pub fn herdr() -> Option<String> {
-    let mut cfg = Config::default();
-    cfg.herdr.enabled = true;
-    if !available_targets(&cfg).contains(&Target::Herdr) {
+    if cfg!(windows) {
         return None;
     }
     which("herdr").map(|p| p.display().to_string())

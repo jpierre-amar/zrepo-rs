@@ -117,10 +117,20 @@ pub mod sources {   // chaque source est indépendante, appelable depuis un thre
     pub fn collect(cfg: &Config, refresh: bool) -> Res<(Vec<Entry>, Vec<String>)>;
 }
 pub mod open {
-    pub enum Target { Zed, Herdr }
-    pub fn available_targets(cfg: &Config) -> Vec<Target>;   // Herdr seulement si activé et présent
+    /// Écrite comme une chaîne dans config.toml : "zed", "herdr", "terminal", ou l'id d'un éditeur.
+    pub enum Target { Zed, Herdr, Terminal, App(String) }
+    pub fn available_targets(cfg: &Config) -> Vec<Target>;   // cibles installées ; jamais vide
+    pub fn pick_target(want: &Target, targets: &[Target]) -> Target;   // repli si `want` est absent
     /// Résout (clone si besoin) puis ouvre. `progress` reçoit les messages d'étape.
+    /// Terminal et éditeurs : vérifiés avant le clonage ; refusés pour un projet ssh://.
     pub fn open(cfg: &Config, key: &str, target: Target, progress: &dyn Fn(&str)) -> Res<()>;
+}
+pub mod apps {   // terminal et éditeurs
+    pub struct EditorConfig { pub name, pub command, pub args }   // [[editors]] ; {path} = dossier
+    pub struct TerminalConfig { pub command, pub args }           // [terminal] ; vide = détection
+    pub fn editors(cfg: &Config) -> Vec<App>;     // déclarés d'abord, puis éditeurs connus détectés
+    pub fn terminal(cfg: &Config) -> Option<App>;
+    pub fn launch(app: &App, dir: &str, progress: &dyn Fn(&str)) -> Res<()>;
 }
 pub mod doctor { pub struct Check { pub ok: bool, pub label: String, pub detail: String }  pub fn run(cfg: &Config) -> Vec<Check>; }
 ```
@@ -132,6 +142,8 @@ pub mod doctor { pub struct Check { pub ok: bool, pub label: String, pub detail:
 | Binaire Zed | `zeditor` puis `zed` | `zed`, sinon `open -a Zed <chemin>` | `zed` dans le PATH, sinon `%LOCALAPPDATA%\Programs\Zed\bin\zed.exe` |
 | Lancement détaché | `setsid -f` s'il existe, sinon spawn | spawn (ou `open`) | `CREATE_NO_WINDOW` et `DETACHED_PROCESS` |
 | Herdr | oui. Focus Hyprland seulement si `hyprctl` est présent | oui, sans focus de fenêtre | désactivé |
+| Terminal | `$TERMINAL`, puis ghostty, kitty, alacritty, foot, wezterm, gnome-terminal, konsole, xfce4-terminal, x-terminal-emulator, xterm | `open -a Terminal <chemin>` | `wt -d <chemin>`, sinon `pwsh`/`powershell -NoExit` dans une nouvelle console |
+| Éditeurs connus | PATH | PATH, sinon `open -a <App>` si `/Applications/<App>.app` existe | PATH, sinon dossiers d'installation (`%LOCALAPPDATA%\Programs\…`) |
 | `/proc` | oui | non | non |
 | Scan distant | `ssh` | `ssh` | `ssh.exe` (OpenSSH Windows) |
 
@@ -143,7 +155,7 @@ Aucun appel aux commandes `omarchy-*` n'est obligatoire. On les utilise si elles
 zrepo-rs                  fenêtre de lancement (assistant au premier lancement)
 zrepo-rs setup            assistant de configuration (dossier, GitHub, cibles, raccourci)
 zrepo-rs list [--refresh] TSV (compatible v1)
-zrepo-rs open <clé> [--with zed|herdr|codex]   (codex = alias de herdr pour la compatibilité)
+zrepo-rs open <clé> [--with <cible>]   (sans --with : cible par défaut ; codex = alias de herdr)
 zrepo-rs doctor           diagnostic texte
 zrepo-rs --version | --help
 ```
@@ -158,8 +170,10 @@ Sous Windows, le binaire est `windows_subsystem = "windows"`. On rattache la con
 - Liste virtualisée. Chaque ligne a une icône par type, le nom, l'owner ou le serveur, et un badge de visibilité.
   La ligne sélectionnée est mise en évidence. Navigation au clavier (↑ ↓, PgUp et PgDn) et à la souris (survol, double-clic).
 - Panneau de détails : chemin, origine, description, et « sera cloné dans … ».
-- Barre du bas : choix de la cible (Zed ou Herdr + codex), aide clavier, état du chargement (spinner) et avertissements.
-- Raccourcis : Entrée ouvre, Ctrl-E ouvre dans Zed, Ctrl-Y dans Herdr, Tab change la cible, Ctrl-R rafraîchit, Ctrl-, ouvre les réglages.
+- Barre du bas : choix de la cible (segments jusqu'à trois cibles, liste déroulante au-delà), aide clavier,
+  état du chargement (spinner) et avertissements.
+- Raccourcis : Entrée ouvre, Ctrl-E ouvre dans Zed, Ctrl-Y dans Herdr, Ctrl-T dans un terminal, Tab change la cible,
+  Ctrl-R rafraîchit, Ctrl-, ouvre les réglages.
 - Chargement asynchrone : les projets locaux s'affichent tout de suite, les serveurs et GitHub arrivent ensuite.
 - Ouverture : le clonage est montré dans la fenêtre (progression), puis la fenêtre se ferme. En cas d'erreur,
   le message reste affiché dans la fenêtre.
@@ -170,7 +184,8 @@ Sous Windows, le binaire est `windows_subsystem = "windows"`. On rattache la con
 2. Dossier des projets : sélecteur natif (`rfd`), `~/Projects` par défaut.
 3. GitHub : connexion par le navigateur (le code s'affiche en grand, avec un bouton « Copier et ouvrir github.com »
    et un polling en arrière-plan), ou un jeton collé, ou le jeton de gh, ou « Plus tard ». Affiche « Connecté en tant que @login ».
-4. Cibles : Zed détecté ou non, Herdr détecté ou non, cible par défaut.
+4. Cibles : Zed, Herdr, terminal et éditeurs connus détectés ou non ; « Mes éditeurs » (ajout d'un exécutable
+   avec le sélecteur de fichiers, retrait) ; cible par défaut parmi les cibles disponibles.
 5. Raccourci clavier : sous Hyprland, proposer d'ajouter `SUPER + R` (montrer la ligne, l'ajouter seulement si l'utilisateur confirme).
    Sous les autres OS, expliquer comment créer le raccourci (sous macOS via Raccourcis, sous Windows via les propriétés du raccourci du menu Démarrer).
 6. Terminé : enregistre `config.toml` et propose d'ouvrir le lanceur.

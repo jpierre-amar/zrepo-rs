@@ -4,7 +4,7 @@
 use std::{fs, path::Path};
 
 use crate::{
-    auth,
+    apps, auth,
     config::Config,
     sources::remote::{self, Settings},
     sys,
@@ -129,7 +129,28 @@ pub fn run(cfg: &Config) -> Vec<Check> {
             }
             check(true, "zed", d)
         }
-        None => check(false, "zed", "introuvable"),
+        // Facultatif : d'autres cibles existent, mais les projets distants
+        // ne s'ouvrent que dans Zed ou Herdr.
+        None => check(true, "zed", "absent (facultatif)"),
+    });
+    out.push(match apps::terminal(cfg) {
+        Some(t) => check(true, "terminal", t.program.display().to_string()),
+        None => check(
+            false,
+            "terminal",
+            "introuvable — indiquez-en un dans config.toml, section [terminal]",
+        ),
+    });
+    let editors = apps::editors(cfg);
+    out.push(if editors.is_empty() {
+        check(
+            true,
+            "éditeurs",
+            "aucun détecté (ajout possible : zrepo-rs setup)",
+        )
+    } else {
+        let names: Vec<&str> = editors.iter().map(|a| a.name.as_str()).collect();
+        check(true, "éditeurs", names.join(", "))
     });
     out.push(github(cfg));
 

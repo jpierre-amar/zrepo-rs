@@ -55,6 +55,7 @@ pub enum Action {
     None,
     Close(i32),
     Settings,
+    SettingsServers,
 }
 
 pub struct Launcher {
@@ -145,20 +146,17 @@ impl Launcher {
 
     /// Après l'assistant (Ctrl-,) : nouvelle configuration, nouvelle liste.
     pub fn reconfigure(&mut self, ctx: &egui::Context, cfg: Config) {
+        let servers_changed = self.cfg.remote.servers != cfg.remote.servers;
         self.cfg = cfg;
         self.apply_config(None);
         self.failure = None;
-        self.load(ctx, false);
+        self.load(ctx, servers_changed);
     }
 
     fn apply_config(&mut self, target: Option<Target>) {
         self.targets = open::available_targets(&self.cfg);
-        let want = target.unwrap_or(self.cfg.ui.default_target);
-        self.target = if self.targets.contains(&want) {
-            want
-        } else {
-            Target::Zed
-        };
+        let want = target.unwrap_or_else(|| self.cfg.ui.default_target.clone());
+        self.target = open::pick_target(&want, &self.targets);
     }
 
     /// Doit-on garder la fenêtre ouverte malgré la perte du focus ?
@@ -269,14 +267,18 @@ impl Launcher {
 
     fn open(&mut self, ctx: &egui::Context, target: Target) {
         if !self.targets.contains(&target) {
-            let why = if cfg!(windows) {
-                "Herdr n'est pas disponible sous Windows."
-            } else if !self.cfg.herdr.enabled {
-                "Herdr est désactivé dans la configuration (Ctrl-,)."
-            } else {
-                "Herdr est introuvable dans le PATH."
+            let why = match target {
+                Target::Herdr if cfg!(windows) => "Herdr n'est pas disponible sous Windows.".into(),
+                Target::Herdr if !self.cfg.herdr.enabled => {
+                    "Herdr est désactivé dans la configuration (Ctrl-,).".into()
+                }
+                Target::Terminal => {
+                    "Aucun terminal trouvé : indiquez-en un dans config.toml, section [terminal]."
+                        .into()
+                }
+                t => format!("{} est introuvable.", t.label(&self.cfg)),
             };
-            self.notify(ctx, why);
+            self.notify(ctx, &why);
             return;
         }
         let Some(e) = self.selected().cloned() else {
@@ -286,6 +288,7 @@ impl Launcher {
         let cfg = self.cfg.clone();
         let c = ctx.clone();
         let key = e.key.clone();
+        let label = target.label(&self.cfg);
         thread::spawn(move || {
             let progress = |m: &str| {
                 let _ = tx.send(OpenMsg::Progress(m.to_string()));
@@ -297,7 +300,7 @@ impl Launcher {
         });
         self.opening = Some(Opening {
             name: e.name.clone(),
-            target: target.label(&self.cfg),
+            target: label,
             log: Vec::new(),
             rx,
         });
@@ -361,7 +364,7 @@ impl Launcher {
         }
         match key {
             Key::Escape => return Action::Close(EX_CANCEL),
-            Key::Enter => self.open(ctx, self.target),
+            Key::Enter => self.open(ctx, self.target.clone()),
             Key::Tab if self.targets.len() > 1 => {
                 let n = self.targets.len();
                 let i = self
@@ -374,15 +377,22 @@ impl Launcher {
                 } else {
                     (i + 1) % n
                 };
-                self.target = self.targets[j];
+                self.target = self.targets[j].clone();
             }
-            Key::Tab => self.notify(ctx, "Une seule cible disponible : Zed."),
+            Key::Tab => {
+                let msg = format!(
+                    "Une seule cible disponible : {}.",
+                    self.target.label(&self.cfg)
+                );
+                self.notify(ctx, &msg);
+            }
             Key::ArrowUp => self.step(-1),
             Key::ArrowDown => self.step(1),
             Key::PageUp => self.step(-self.page()),
             Key::PageDown => self.step(self.page()),
             Key::E if ctrl => self.open(ctx, Target::Zed),
             Key::Y if ctrl => self.open(ctx, Target::Herdr),
+            Key::T if ctrl => self.open(ctx, Target::Terminal),
             Key::R if ctrl => {
                 self.load(ctx, true);
                 self.notify(ctx, "Actualisation : GitHub et scan des serveurs…");
@@ -432,8 +442,12 @@ impl Launcher {
                 header.bottom(),
                 Stroke::new(1.0, pal.border),
             );
-            self.pills_ui(ui, pills);
-            self.list_ui(ui, list, &pal);
+            if self.pills_ui(ui, pills) {
+                action = Action::SettingsServers;
+            }
+            if self.list_ui(ui, list, &pal) {
+                action = Action::SettingsServers;
+            }
             self.details_ui(ui, details, &pal);
             ui.painter()
                 .hline(card.x_range(), footer.top(), Stroke::new(1.0, pal.border));
@@ -514,7 +528,7 @@ impl Launcher {
         }
     }
 
-    fn pills_ui(&mut self, ui: &mut egui::Ui, rect: Rect) {
+    fn pills_ui(&mut self, ui: &mut egui::Ui, rect: Rect) -> bool {
         let mut child = ui.new_child(
             UiBuilder::new()
                 .max_rect(rect.shrink2(vec2(16.0, 0.0)))
@@ -531,9 +545,14 @@ impl Launcher {
                 self.set_filter(f);
             }
         }
+        self.filter == Filter::Remote
+            && child
+                .small_button("Configurer les serveurs")
+                .on_hover_text("Ajouter ou modifier les serveurs SSH")
+                .clicked()
     }
 
-    fn list_ui(&mut self, ui: &mut egui::Ui, rect: Rect, pal: &Pal) {
+    fn list_ui(&mut self, ui: &mut egui::Ui, rect: Rect, pal: &Pal) -> bool {
         let mut child = ui.new_child(UiBuilder::new().max_rect(rect.shrink2(vec2(8.0, 0.0))));
         child.spacing_mut().item_spacing = vec2(0.0, 0.0);
         if self.view.is_empty() {
@@ -543,6 +562,11 @@ impl Launcher {
                 (
                     format!("Aucun projet ne correspond à « {} »", self.query.trim()),
                     "Essayez moins de lettres, ou un autre filtre.".to_string(),
+                )
+            } else if self.filter == Filter::Remote {
+                (
+                    "Aucun projet distant".to_string(),
+                    "Recherchez vos hôtes SSH ou ajoutez un serveur dans les réglages.".to_string(),
                 )
             } else if self.entries.is_empty() {
                 (
@@ -573,7 +597,12 @@ impl Launcher {
                 let pos = pos2(c.x - g.size().x / 2.0, c.y + 16.0);
                 child.painter().galley(pos, g, pal.faint);
             }
-            return;
+            if self.pending == 0 && self.query.trim().is_empty() && self.filter == Filter::Remote {
+                let button_rect = Rect::from_center_size(pos2(c.x, c.y + 72.0), vec2(190.0, 30.0));
+                let mut button_ui = child.new_child(UiBuilder::new().max_rect(button_rect));
+                return theme::button(&mut button_ui, "Configurer les serveurs", true).clicked();
+            }
+            return false;
         }
         let mut sa = ScrollArea::vertical()
             .id_salt("projets")
@@ -607,8 +636,9 @@ impl Launcher {
         self.view_h = out.inner_rect.height();
         if open_now {
             let ctx = ui.ctx().clone();
-            self.open(&ctx, self.target);
+            self.open(&ctx, self.target.clone());
         }
+        false
     }
 
     fn row_ui(&self, ui: &mut egui::Ui, i: usize, pal: &Pal) -> (bool, bool) {
@@ -778,7 +808,7 @@ impl Launcher {
             .truncate();
         if c.add(b).on_hover_text("Entrée").clicked() {
             let ctx = c.ctx().clone();
-            self.open(&ctx, self.target);
+            self.open(&ctx, self.target.clone());
         }
     }
 
@@ -791,7 +821,38 @@ impl Launcher {
         let ui = &mut child;
         ui.spacing_mut().item_spacing.x = 6.0;
 
-        // Sélecteur de cible : seulement les cibles disponibles.
+        // Sélecteur de cible : seulement les cibles disponibles. Au-delà de
+        // trois, une liste déroulante tient dans la largeur de la fenêtre.
+        if self.targets.len() > 3 {
+            self.target_combo(ui);
+        } else {
+            self.target_segments(ui, pal);
+        }
+        ui.add_space(10.0);
+        theme::keycap(ui, "Entrée", "ouvrir");
+        if self.targets.len() > 1 {
+            theme::keycap(ui, "Tab", "cible");
+        }
+        theme::keycap(ui, "Ctrl R", "actualiser");
+        theme::keycap(ui, "Ctrl ,", "réglages");
+        self.footer_status(ui, pal);
+    }
+
+    fn target_combo(&mut self, ui: &mut egui::Ui) {
+        egui::ComboBox::from_id_salt("cible")
+            .selected_text(self.target.label(&self.cfg))
+            .width(170.0)
+            .show_ui(ui, |ui| {
+                for t in self.targets.clone() {
+                    let label = t.label(&self.cfg);
+                    ui.selectable_value(&mut self.target, t, label);
+                }
+            })
+            .response
+            .on_hover_text("Tab pour changer de cible");
+    }
+
+    fn target_segments(&mut self, ui: &mut egui::Ui, pal: &Pal) {
         let seg_h = 28.0;
         let labels: Vec<String> = self.targets.iter().map(|t| t.label(&self.cfg)).collect();
         let widths: Vec<f32> = labels
@@ -834,15 +895,10 @@ impl Launcher {
                 self.target = t;
             }
         }
-        ui.add_space(10.0);
-        theme::keycap(ui, "Entrée", "ouvrir");
-        if self.targets.len() > 1 {
-            theme::keycap(ui, "Tab", "cible");
-        }
-        theme::keycap(ui, "Ctrl R", "actualiser");
-        theme::keycap(ui, "Ctrl ,", "réglages");
+    }
 
-        // À droite : message temporaire, chargement ou avertissements.
+    /// À droite : message temporaire, chargement ou avertissements.
+    fn footer_status(&mut self, ui: &mut egui::Ui, pal: &Pal) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let now = ui.input(|i| i.time);
             let mut warnings: Vec<String> = self.remote_warnings.clone();

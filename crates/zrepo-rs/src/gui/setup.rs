@@ -17,9 +17,11 @@ use eframe::egui::{
     StrokeKind, TextEdit, UiBuilder, pos2, vec2,
 };
 use zrepo_core::{
+    apps::{self, EditorConfig},
     auth::{self, DeviceCode, Poll, TokenSource},
-    config::Config,
-    open::Target,
+    config::{Config, RemoteServer},
+    open::{self, Target},
+    sources,
 };
 
 use super::theme::{self, Pal};
@@ -30,15 +32,17 @@ pub enum Step {
     Welcome,
     Folder,
     Github,
+    Servers,
     Targets,
     Shortcut,
     Done,
 }
 
-const STEPS: [(Step, &str); 6] = [
+const STEPS: [(Step, &str); 7] = [
     (Step::Welcome, "Bienvenue"),
     (Step::Folder, "Dossier"),
     (Step::Github, "GitHub"),
+    (Step::Servers, "Serveurs"),
     (Step::Targets, "Cibles"),
     (Step::Shortcut, "Raccourci"),
     (Step::Done, "Terminé"),
@@ -96,8 +100,25 @@ pub struct Setup {
     gh_rx: Receiver<(u64, GhMsg)>,
     cancel: Option<Arc<AtomicBool>>,
     pat: String,
+    server_host: String,
+    server_label: String,
+    server_paths: String,
+    editing_server: Option<usize>,
+    server_error: Option<String>,
+    ssh_tx: Sender<(u64, String, sources::SshStatus)>,
+    ssh_rx: Receiver<(u64, String, sources::SshStatus)>,
+    ssh_gen: u64,
+    discovered: Vec<(String, Option<sources::SshStatus>)>,
     zed: Option<String>,
     herdr: Option<String>,
+    /// Détection coûteuse (PATH, dossiers d'installation) : recalculée
+    /// seulement quand les réglages des cibles changent.
+    terminal: Option<String>,
+    /// Éditeurs connus détectés : (nom, chemin).
+    detected: Vec<(String, String)>,
+    targets: Vec<Target>,
+    editor_name: String,
+    editor_rx: Option<Receiver<Option<PathBuf>>>,
     exe: PathBuf,
     shortcut: Option<Result<hypr::Proposal, String>>,
     applied: Option<Result<Vec<PathBuf>, String>>,
@@ -108,6 +129,7 @@ pub struct Setup {
 impl Setup {
     pub fn new(ctx: &egui::Context, cfg: Config, embedded: bool) -> Self {
         let (gh_tx, gh_rx) = mpsc::channel();
+        let (ssh_tx, ssh_rx) = mpsc::channel();
         let exe = std::env::current_exe()
             .ok()
             .and_then(|p| p.canonicalize().ok())
@@ -128,16 +150,31 @@ impl Setup {
             gh_rx,
             cancel: None,
             pat: String::new(),
+            server_host: String::new(),
+            server_label: String::new(),
+            server_paths: String::new(),
+            editing_server: None,
+            server_error: None,
+            ssh_tx,
+            ssh_rx,
+            ssh_gen: 0,
+            discovered: Vec::new(),
             zed: detect::zed(),
             herdr: detect::herdr(),
+            terminal: None,
+            detected: Vec::new(),
+            targets: Vec::new(),
+            editor_name: String::new(),
+            editor_rx: None,
             exe,
             shortcut: None,
             applied: None,
             saved: None,
             logo: None,
         };
+        s.refresh_targets();
         s.check_github(ctx);
-        // Débogage (captures d'écran) : ouvrir directement l'étape n (1 à 6).
+        // Débogage (captures d'écran) : ouvrir directement l'étape n (1 à 7).
         if let Some(n) = std::env::var("ZREPO_RS_DEBUG_SETUP_STEP")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
@@ -157,9 +194,19 @@ impl Setup {
         self.embedded
     }
 
+    pub fn show_servers(&mut self, ctx: &egui::Context) {
+        self.enter(ctx, Step::Servers);
+    }
+
     fn enter(&mut self, ctx: &egui::Context, step: Step) {
         if step == Step::Shortcut && self.shortcut.is_none() && hypr::running() {
             self.shortcut = Some(hypr::propose(&self.exe));
+        }
+        if step == Step::Targets {
+            self.refresh_targets();
+        }
+        if step == Step::Servers {
+            self.discover_servers(ctx);
         }
         if step == Step::Done {
             self.save();
@@ -185,6 +232,111 @@ impl Setup {
 
     fn save(&mut self) {
         self.saved = Some(self.cfg.save().map(|()| Config::path()).map_err(|f| f.msg));
+    }
+
+    fn discover_servers(&mut self, ctx: &egui::Context) {
+        self.ssh_gen += 1;
+        let generation = self.ssh_gen;
+        self.discovered = sources::ssh_hosts(&self.cfg)
+            .into_iter()
+            .map(|host| (host, None))
+            .collect();
+        for (host, _) in &self.discovered {
+            let (host, tx, ctx) = (host.clone(), self.ssh_tx.clone(), ctx.clone());
+            thread::spawn(move || {
+                let status = sources::ssh_status(&host);
+                let _ = tx.send((generation, host, status));
+                ctx.request_repaint();
+            });
+        }
+    }
+
+    fn clear_server_form(&mut self) {
+        self.server_host.clear();
+        self.server_label.clear();
+        self.server_paths.clear();
+        self.editing_server = None;
+        self.server_error = None;
+    }
+
+    fn save_server_form(&mut self) -> bool {
+        let server =
+            match server_from_form(&self.server_host, &self.server_label, &self.server_paths) {
+                Ok(server) => server,
+                Err(error) => {
+                    self.server_error = Some(error);
+                    return false;
+                }
+            };
+        if self.cfg.remote.servers.iter().enumerate().any(|(i, s)| {
+            Some(i) != self.editing_server && s.host.eq_ignore_ascii_case(&server.host)
+        }) {
+            self.server_error = Some("Ce serveur est déjà ajouté.".into());
+            return false;
+        }
+        if let Some(i) = self.editing_server {
+            self.cfg.remote.servers[i] = server;
+        } else {
+            self.cfg.remote.servers.push(server);
+        }
+        self.clear_server_form();
+        true
+    }
+
+    /// Cibles disponibles d'après les réglages courants ; la cible par défaut
+    /// est ramenée sur l'une d'elles.
+    fn refresh_targets(&mut self) {
+        self.terminal = apps::terminal(&self.cfg).map(|t| t.program.display().to_string());
+        let mine = &self.cfg.editors;
+        self.detected = apps::editors(&self.cfg)
+            .into_iter()
+            .filter(|a| !mine.iter().any(|e| e.name == a.name))
+            .map(|a| (a.name, a.program.display().to_string()))
+            .collect();
+        self.targets = open::available_targets(&self.cfg);
+        self.cfg.ui.default_target = open::pick_target(&self.cfg.ui.default_target, &self.targets);
+    }
+
+    /// Sélecteur de l'exécutable d'un éditeur, comme `pick_folder`.
+    fn pick_editor(&mut self) {
+        let dialog = || {
+            let mut d = rfd::FileDialog::new().set_title("Exécutable de l'éditeur");
+            if cfg!(windows) {
+                d = d.add_filter("Programmes", &["exe", "cmd", "bat"]);
+            }
+            d
+        };
+        let (tx, rx) = mpsc::channel();
+        if cfg!(target_os = "macos") {
+            let _ = tx.send(dialog().pick_file());
+        } else {
+            let d = dialog();
+            thread::spawn(move || {
+                let _ = tx.send(d.pick_file());
+            });
+        }
+        self.editor_rx = Some(rx);
+    }
+
+    fn add_editor(&mut self, program: PathBuf) {
+        let typed = self.editor_name.trim();
+        let name = if typed.is_empty() {
+            program
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Éditeur".into())
+        } else {
+            typed.to_string()
+        };
+        self.cfg.editors.retain(|e| e.name != name);
+        self.cfg.editors.push(EditorConfig {
+            name: name.clone(),
+            command: program.display().to_string(),
+            args: Vec::new(),
+        });
+        self.editor_name.clear();
+        self.refresh_targets();
+        self.cfg.ui.default_target = Target::App(name);
     }
 
     // ---------- GitHub (threads) ----------
@@ -320,6 +472,13 @@ impl Setup {
     }
 
     fn receive(&mut self) {
+        while let Ok((generation, host, status)) = self.ssh_rx.try_recv() {
+            if generation == self.ssh_gen
+                && let Some((_, state)) = self.discovered.iter_mut().find(|(h, _)| *h == host)
+            {
+                *state = Some(status);
+            }
+        }
         while let Ok((generation, m)) = self.gh_rx.try_recv() {
             if let GhMsg::Status(_, gh_cli) = &m {
                 self.gh_cli = Some(*gh_cli);
@@ -367,6 +526,14 @@ impl Setup {
                 self.confirm_create = false;
             }
         }
+        if let Some(rx) = &self.editor_rx
+            && let Ok(r) = rx.try_recv()
+        {
+            self.editor_rx = None;
+            if let Some(p) = r {
+                self.add_editor(p);
+            }
+        }
     }
 
     // ---------- Interface ----------
@@ -378,6 +545,7 @@ impl Setup {
             self.gh,
             Gh::Checking | Gh::Starting | Gh::Waiting(_) | Gh::Verifying
         ) || self.pick_rx.is_some()
+            || self.editor_rx.is_some()
         {
             ctx.request_repaint_after(Duration::from_millis(150));
         }
@@ -413,6 +581,7 @@ impl Setup {
                     Step::Welcome => self.welcome_ui(ui, &pal),
                     Step::Folder => self.folder_ui(ui, &pal),
                     Step::Github => self.github_ui(ui, &pal),
+                    Step::Servers => self.servers_ui(ui, &pal),
                     Step::Targets => self.targets_ui(ui, &pal),
                     Step::Shortcut => self.shortcut_ui(ui, &pal),
                     Step::Done => self.done_ui(ui, &pal),
@@ -513,12 +682,17 @@ impl Setup {
                 let label = match step {
                     Step::Welcome => "Commencer",
                     Step::Github if !matches!(self.gh, Gh::Connected(..)) => "Plus tard",
+                    Step::Servers if self.embedded => "Enregistrer",
                     Step::Shortcut => "Enregistrer",
                     _ => "Suivant",
                 };
                 let primary = !(step == Step::Github && label == "Plus tard");
                 if theme::button(ui, label, primary).clicked() && self.validate(step) {
-                    let next = Step::from_index(step.index() + 1);
+                    let next = if self.embedded && step == Step::Servers {
+                        Step::Done
+                    } else {
+                        Step::from_index(step.index() + 1)
+                    };
                     self.enter(&ctx, next);
                 }
             }
@@ -528,6 +702,13 @@ impl Setup {
 
     /// Vérifie l'étape avant de passer à la suivante.
     fn validate(&mut self, step: Step) -> bool {
+        if step == Step::Servers {
+            let pending = self.editing_server.is_some()
+                || !self.server_host.trim().is_empty()
+                || !self.server_label.trim().is_empty()
+                || !self.server_paths.trim().is_empty();
+            return !pending || self.save_server_form();
+        }
         if step != Step::Folder {
             return true;
         }
@@ -952,6 +1133,175 @@ impl Setup {
         });
     }
 
+    fn servers_ui(&mut self, ui: &mut egui::Ui, pal: &Pal) {
+        Self::title(
+            ui,
+            pal,
+            "Vos serveurs SSH",
+            "Les hôtes connus sont recherchés avant toute saisie.",
+        );
+        ui.checkbox(
+            &mut self.cfg.remote.enabled,
+            "Afficher les projets des serveurs",
+        );
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new("Serveurs détectés")
+                    .size(14.0)
+                    .color(pal.text),
+            );
+            if ui.small_button("Relancer la recherche").clicked() {
+                self.discover_servers(ui.ctx());
+            }
+        });
+        ui.label(
+            RichText::new(
+                "Alias de ~/.ssh/config et connexions Zed ; test SSH sans mot de passe ni invite.",
+            )
+            .size(12.0)
+            .color(pal.faint),
+        );
+        ui.add_space(6.0);
+        if !sources::ssh_installed() {
+            status(ui, pal.error, "Commande ssh introuvable sur ce poste.");
+        } else if self.discovered.is_empty() {
+            ui.label("Aucun serveur déclaré dans SSH ou Zed. Ajoutez-en un ci-dessous.");
+        }
+        for (host, availability) in self.discovered.clone() {
+            let added = self
+                .cfg
+                .remote
+                .servers
+                .iter()
+                .any(|s| s.host.eq_ignore_ascii_case(&host));
+            ui.horizontal(|ui| {
+                dot(
+                    ui,
+                    match availability {
+                        Some(sources::SshStatus::Ready) => pal.ok,
+                        Some(_) => pal.error,
+                        None => pal.faint,
+                    },
+                );
+                ui.label(RichText::new(&host).size(13.5).color(pal.text));
+                ui.label(
+                    RichText::new(match availability {
+                        Some(sources::SshStatus::Ready) => "connexion SSH prête",
+                        Some(sources::SshStatus::HostKeyChanged) => {
+                            "clé d'hôte modifiée — vérifier"
+                        }
+                        Some(sources::SshStatus::Unavailable) => "connexion à vérifier",
+                        None => "vérification…",
+                    })
+                    .size(12.0)
+                    .color(pal.weak),
+                );
+                if ui
+                    .add_enabled(
+                        !added,
+                        egui::Button::new(if added { "Ajouté" } else { "Ajouter" }),
+                    )
+                    .clicked()
+                {
+                    self.cfg.remote.servers.push(RemoteServer {
+                        host: host.clone(),
+                        label: host.clone(),
+                        paths: Vec::new(),
+                    });
+                    self.cfg.remote.enabled = true;
+                }
+            });
+        }
+        ui.add_space(14.0);
+        ui.label(RichText::new("Serveurs ajoutés").size(14.0).color(pal.text));
+        let mut edit = None;
+        let mut remove = None;
+        for (i, server) in self.cfg.remote.servers.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{} ({})", server.label, server.host))
+                        .size(13.0)
+                        .color(pal.text),
+                );
+                if ui.small_button("Modifier").clicked() {
+                    edit = Some(i);
+                }
+                if ui.small_button("Supprimer").clicked() {
+                    remove = Some(i);
+                }
+            });
+        }
+        if let Some(i) = remove {
+            self.cfg.remote.servers.remove(i);
+            self.clear_server_form();
+        } else if let Some(i) = edit {
+            let server = &self.cfg.remote.servers[i];
+            self.server_host = server.host.clone();
+            self.server_label = server.label.clone();
+            self.server_paths = server.paths.join("\n");
+            self.editing_server = Some(i);
+            self.server_error = None;
+        }
+        ui.add_space(14.0);
+        ui.label(
+            RichText::new(if self.editing_server.is_some() {
+                "Modifier un serveur"
+            } else {
+                "Ajouter un autre serveur"
+            })
+            .size(14.0)
+            .color(pal.text),
+        );
+        ui.label("Hôte SSH (alias de ~/.ssh/config ou utilisateur@hôte)");
+        ui.add(TextEdit::singleline(&mut self.server_host).desired_width(f32::INFINITY));
+        ui.label("Nom affiché (facultatif)");
+        ui.add(TextEdit::singleline(&mut self.server_label).desired_width(f32::INFINITY));
+        ui.label("Chemins de projets sur le serveur (facultatif, un chemin absolu par ligne)");
+        ui.add(
+            TextEdit::multiline(&mut self.server_paths)
+                .desired_width(f32::INFINITY)
+                .desired_rows(2),
+        );
+        ui.label(
+            RichText::new(
+                "Sans chemin indiqué, zrepo-rs cherchera les dépôts Git lors de l'actualisation.",
+            )
+            .size(12.0)
+            .color(pal.faint),
+        );
+        if let Some(error) = &self.server_error {
+            status(ui, pal.error, error);
+        }
+        ui.horizontal(|ui| {
+            if theme::button(
+                ui,
+                if self.editing_server.is_some() {
+                    "Enregistrer"
+                } else {
+                    "Ajouter"
+                },
+                true,
+            )
+            .clicked()
+            {
+                self.save_server_form();
+            }
+            if self.editing_server.is_some() && ui.button("Annuler").clicked() {
+                self.clear_server_form();
+            }
+        });
+        ui.add_space(12.0);
+        ui.label(
+            RichText::new(format!(
+                "Connexions Zed également lues dans {}",
+                tilde_path(&self.cfg.zed_settings_path())
+            ))
+            .size(12.0)
+            .color(pal.faint),
+        );
+    }
+
     fn targets_ui(&mut self, ui: &mut egui::Ui, pal: &Pal) {
         Self::title(
             ui,
@@ -965,7 +1315,7 @@ impl Setup {
                 pal,
                 "Zed",
                 self.zed.as_deref(),
-                "introuvable : installez Zed depuis zed.dev",
+                "introuvable (facultatif) : zed.dev",
             );
             ui.add_space(6.0);
             let herdr_missing = if cfg!(windows) {
@@ -974,24 +1324,32 @@ impl Setup {
                 "introuvable (facultatif)"
             };
             tool_row(ui, pal, "Herdr", self.herdr.as_deref(), herdr_missing);
+            ui.add_space(6.0);
+            tool_row(
+                ui,
+                pal,
+                "Terminal",
+                self.terminal.as_deref(),
+                "introuvable : à indiquer dans config.toml, section [terminal]",
+            );
+            for (name, path) in &self.detected {
+                ui.add_space(6.0);
+                tool_row(ui, pal, name, Some(path.as_str()), "");
+            }
         });
         ui.add_space(14.0);
         ui.spacing_mut().interact_size.y = 24.0;
         ui.spacing_mut().item_spacing.y = 8.0;
-        let herdr_ok = self.herdr.is_some();
-        let agent = self.cfg.agent_label();
+        self.my_editors_ui(ui, pal);
+        ui.add_space(12.0);
         ui.label(RichText::new("Cible par défaut").size(13.5).color(pal.text));
         ui.add_space(2.0);
-        ui.horizontal(|ui| {
-            ui.radio_value(&mut self.cfg.ui.default_target, Target::Zed, "Zed");
-            ui.add_space(16.0);
-            ui.add_enabled_ui(herdr_ok && self.cfg.herdr.enabled, |ui| {
-                ui.radio_value(
-                    &mut self.cfg.ui.default_target,
-                    Target::Herdr,
-                    format!("Herdr + {agent}"),
-                );
-            });
+        ui.horizontal_wrapped(|ui| {
+            for t in self.targets.clone() {
+                let label = t.label(&self.cfg);
+                ui.radio_value(&mut self.cfg.ui.default_target, t, label);
+                ui.add_space(10.0);
+            }
         });
         ui.add_space(12.0);
         ui.label(
@@ -1000,25 +1358,83 @@ impl Setup {
                 .color(pal.text),
         );
         ui.add_space(2.0);
-        ui.add_enabled_ui(!cfg!(windows), |ui| {
-            ui.checkbox(
-                &mut self.cfg.herdr.enabled,
-                format!("Proposer Herdr + {agent} quand il est installé"),
-            );
-        });
-        if !self.cfg.herdr.enabled || !herdr_ok {
-            self.cfg.ui.default_target = Target::Zed;
+        let agent = self.cfg.agent_label();
+        let herdr_toggled = ui
+            .add_enabled_ui(!cfg!(windows), |ui| {
+                ui.checkbox(
+                    &mut self.cfg.herdr.enabled,
+                    format!("Proposer Herdr + {agent} quand il est installé"),
+                )
+            })
+            .inner
+            .changed();
+        if herdr_toggled {
+            self.refresh_targets();
         }
         ui.checkbox(&mut self.cfg.github.enabled, "Afficher mes dépôts GitHub");
         ui.checkbox(
             &mut self.cfg.remote.enabled,
-            "Afficher les projets de mes serveurs (ssh_connections de Zed)",
+            "Afficher les projets de mes serveurs (configurés ici et dans Zed)",
         );
         ui.label(
             RichText::new(format!(
                 "Lu dans {}",
                 tilde_path(&self.cfg.zed_settings_path())
             ))
+            .size(12.0)
+            .color(pal.faint),
+        );
+    }
+
+    /// Éditeurs ajoutés à la main : n'importe quel exécutable, qui reçoit le
+    /// dossier du projet en dernier argument.
+    fn my_editors_ui(&mut self, ui: &mut egui::Ui, pal: &Pal) {
+        ui.label(RichText::new("Mes éditeurs").size(13.5).color(pal.text));
+        ui.add_space(2.0);
+        let mut remove = None;
+        for (i, e) in self.cfg.editors.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&e.name).size(14.0).color(pal.text));
+                ui.add_space(6.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(tilde_path(Path::new(&e.command)))
+                            .size(12.5)
+                            .color(pal.weak),
+                    )
+                    .truncate(),
+                );
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if theme::button(ui, "Retirer", false).clicked() {
+                        remove = Some(i);
+                    }
+                });
+            });
+        }
+        if let Some(i) = remove {
+            self.cfg.editors.remove(i);
+            self.refresh_targets();
+        }
+        ui.horizontal(|ui| {
+            ui.add(
+                TextEdit::singleline(&mut self.editor_name)
+                    .hint_text("Nom (facultatif)")
+                    .desired_width(180.0),
+            );
+            let busy = self.editor_rx.is_some();
+            if ui
+                .add_enabled_ui(!busy, |ui| theme::button(ui, "Ajouter un éditeur…", false))
+                .inner
+                .clicked()
+            {
+                self.pick_editor();
+            }
+        });
+        ui.label(
+            RichText::new(
+                "Choisissez l'exécutable de votre éditeur ou IDE : il recevra le dossier du \
+                 projet. Options avancées : section [[editors]] de config.toml.",
+            )
             .size(12.0)
             .color(pal.faint),
         );
@@ -1255,6 +1671,38 @@ fn tilde_path(p: &Path) -> String {
     }
 }
 
+fn server_from_form(host: &str, label: &str, paths: &str) -> Result<RemoteServer, String> {
+    let host = host.trim();
+    if host.is_empty()
+        || host.starts_with('-')
+        || host
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == '/' || c == '\\')
+    {
+        return Err("Indiquez un hôte SSH ou un alias valide, sans espace ni chemin.".into());
+    }
+    let mut projects = Vec::new();
+    for path in paths.lines().map(str::trim).filter(|p| !p.is_empty()) {
+        if !path.starts_with('/') || path.chars().any(char::is_control) {
+            return Err(format!(
+                "Chemin distant invalide : {path}. Utilisez un chemin absolu."
+            ));
+        }
+        if !projects.iter().any(|existing| existing == path) {
+            projects.push(path.to_string());
+        }
+    }
+    Ok(RemoteServer {
+        host: host.into(),
+        label: if label.trim().is_empty() {
+            host.into()
+        } else {
+            label.trim().into()
+        },
+        paths: projects,
+    })
+}
+
 fn card(ui: &mut egui::Ui, pal: &Pal, add: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(pal.surface)
@@ -1368,4 +1816,20 @@ fn diff(ui: &mut egui::Ui, pal: &Pal, lines: &[hypr::Line]) {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serveur_saisi_et_chemins_valides() {
+        let server =
+            server_from_form(" VPSHost ", "", "/home/jp/a\n/home/jp/a\n/home/jp/b").unwrap();
+        assert_eq!(server.host, "VPSHost");
+        assert_eq!(server.label, "VPSHost");
+        assert_eq!(server.paths, ["/home/jp/a", "/home/jp/b"]);
+        assert!(server_from_form("-oProxyCommand=bad", "", "").is_err());
+        assert!(server_from_form("user@host", "", "relative/path").is_err());
+    }
 }
