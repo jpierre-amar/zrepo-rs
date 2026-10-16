@@ -386,6 +386,14 @@ Le workflow `release.yml` compile les 5 cibles, construit le setup Windows avec 
 Pour retirer une release défectueuse : supprimez-la sur GitHub (ou marquez la précédente comme
 « Latest ») ; `releases/latest` pointe alors de nouveau vers la version saine.
 
+## Contribuer et signaler une faille / Contribute and report a vulnerability
+
+- [Guide de contribution / Contributing guide](CONTRIBUTING.md)
+- [Politique de sécurité / Security policy](SECURITY.md)
+
+Les vulnérabilités se signalent [en privé sur GitHub](https://github.com/jpierre-amar/zrepo-rs/security/advisories/new).
+Please [report vulnerabilities privately on GitHub](https://github.com/jpierre-amar/zrepo-rs/security/advisories/new).
+
 ## Licence
 
 MIT, voir [LICENSE](LICENSE).
