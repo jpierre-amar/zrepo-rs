@@ -245,6 +245,8 @@ impl App {
             let mut setup = Setup::new(&ctx, l.cfg.clone(), true);
             if servers_settings {
                 setup.show_servers(&ctx);
+            } else {
+                setup.show_targets(&ctx);
             }
             self.setup = Some(setup);
             return;

@@ -2,7 +2,7 @@
 # Installeur de zrepo-rs pour Linux et macOS.
 #
 #   curl -fsSL https://github.com/jpierre-amar/zrepo-rs/releases/latest/download/install.sh | sh
-#   curl -fsSL .../install.sh | sh -s -- --yes --dir ~/bin --version v0.3.0 --no-setup
+#   curl -fsSL .../install.sh | sh -s -- --yes --dir ~/bin --version v0.3.1 --no-setup
 #
 # Options :
 #   -y, --yes          aucune question (valeurs par défaut)
@@ -69,7 +69,7 @@ while [ $# -gt 0 ]; do
         --no-setup) RUN_SETUP=0 ;;
         --dir) [ $# -ge 2 ] || die "--dir attend un chemin"; INSTALL_DIR="$2"; DIR_FROM_USER=1; shift ;;
         --dir=*) INSTALL_DIR="${1#--dir=}"; DIR_FROM_USER=1 ;;
-        --version) [ $# -ge 2 ] || die "--version attend une version (ex. v0.3.0)"; VERSION="$2"; shift ;;
+        --version) [ $# -ge 2 ] || die "--version attend une version (ex. v0.3.1)"; VERSION="$2"; shift ;;
         --version=*) VERSION="${1#--version=}" ;;
         -h|--help) usage; exit 0 ;;
         *) die "option inconnue : $1 (voir --help)" ;;

@@ -198,6 +198,10 @@ impl Setup {
         self.enter(ctx, Step::Servers);
     }
 
+    pub fn show_targets(&mut self, ctx: &egui::Context) {
+        self.enter(ctx, Step::Targets);
+    }
+
     fn enter(&mut self, ctx: &egui::Context, step: Step) {
         if step == Step::Shortcut && self.shortcut.is_none() && hypr::running() {
             self.shortcut = Some(hypr::propose(&self.exe));
@@ -682,17 +686,12 @@ impl Setup {
                 let label = match step {
                     Step::Welcome => "Commencer",
                     Step::Github if !matches!(self.gh, Gh::Connected(..)) => "Plus tard",
-                    Step::Servers if self.embedded => "Enregistrer",
                     Step::Shortcut => "Enregistrer",
                     _ => "Suivant",
                 };
                 let primary = !(step == Step::Github && label == "Plus tard");
                 if theme::button(ui, label, primary).clicked() && self.validate(step) {
-                    let next = if self.embedded && step == Step::Servers {
-                        Step::Done
-                    } else {
-                        Step::from_index(step.index() + 1)
-                    };
+                    let next = Step::from_index(step.index() + 1);
                     self.enter(&ctx, next);
                 }
             }

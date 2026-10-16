@@ -54,7 +54,7 @@ Il n'utilise jamais `sudo`. Options, à passer après `sh -s --` :
 
 ```sh
 curl -fsSL https://github.com/jpierre-amar/zrepo-rs/releases/latest/download/install.sh \
-  | sh -s -- --yes --dir ~/bin --version v0.3.0 --no-setup
+  | sh -s -- --yes --dir ~/bin --version v0.3.1 --no-setup
 ```
 
 | Option | Variable | Effet |
@@ -152,6 +152,8 @@ Dans la fenêtre : **Entrée** ouvre, **Ctrl-E** ouvre dans Zed, **Ctrl-Y** dans
 **Ctrl-T** dans un terminal, **Tab** change de cible, **Ctrl-R** rafraîchit,
 **Ctrl-1** à **Ctrl-4** choisissent le filtre
 (Tous, Locaux, Serveurs, GitHub), **Ctrl-,** ouvre les réglages, **Échap** ferme.
+Les réglages s'ouvrent sur **Cibles** pour modifier la cible par défaut ; le bouton
+« Configurer les serveurs » ouvre directement l'étape **Serveurs**.
 Faites glisser la poignée à six points, à gauche du champ de recherche, pour déplacer la fenêtre.
 La fenêtre se ferme aussi quand elle perd le focus, sauf pendant un clonage ou
 quand une erreur est affichée.
@@ -354,7 +356,7 @@ Non documentées dans `--help`, elles servent aux captures d'écran et aux tests
 2. Puis :
 
 ```sh
-git tag v0.3.0 && git push origin v0.3.0
+git tag v0.3.1 && git push origin v0.3.1
 ```
 
 Le workflow `release.yml` compile les 5 cibles, construit le setup Windows avec Inno Setup

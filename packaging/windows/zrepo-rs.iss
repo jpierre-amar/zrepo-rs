@@ -6,7 +6,7 @@
 ; « Applications installées » pour désinstaller proprement.
 ;
 ; Compilation (depuis la racine du dépôt) :
-;   iscc /DAppVersion=0.3.0 /DSourceExe=target\release\zrepo-rs.exe packaging\windows\zrepo-rs.iss
+;   iscc /DAppVersion=0.3.1 /DSourceExe=target\release\zrepo-rs.exe packaging\windows\zrepo-rs.iss
 ; Le setup est écrit dans dist\.
 ;
 ; La désinstallation garde la configuration (%APPDATA%\zrepo-rs), le cache et
