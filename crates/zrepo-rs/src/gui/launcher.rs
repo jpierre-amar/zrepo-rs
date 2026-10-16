@@ -442,7 +442,9 @@ impl Launcher {
                 header.bottom(),
                 Stroke::new(1.0, pal.border),
             );
-            self.pills_ui(ui, pills);
+            if self.pills_ui(ui, pills) {
+                action = Action::SettingsServers;
+            }
             if self.list_ui(ui, list, &pal) {
                 action = Action::SettingsServers;
             }
@@ -526,7 +528,7 @@ impl Launcher {
         }
     }
 
-    fn pills_ui(&mut self, ui: &mut egui::Ui, rect: Rect) {
+    fn pills_ui(&mut self, ui: &mut egui::Ui, rect: Rect) -> bool {
         let mut child = ui.new_child(
             UiBuilder::new()
                 .max_rect(rect.shrink2(vec2(16.0, 0.0)))
@@ -543,6 +545,11 @@ impl Launcher {
                 self.set_filter(f);
             }
         }
+        self.filter == Filter::Remote
+            && child
+                .small_button("Configurer les serveurs")
+                .on_hover_text("Ajouter ou modifier les serveurs SSH")
+                .clicked()
     }
 
     fn list_ui(&mut self, ui: &mut egui::Ui, rect: Rect, pal: &Pal) -> bool {
