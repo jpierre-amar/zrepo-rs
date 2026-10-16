@@ -1,12 +1,15 @@
 # zrepo-rs
 
+[Télécharger / Download](https://github.com/jpierre-amar/zrepo-rs/releases/latest) ·
 [Français](#français) · [English](#english)
 
 ## Français
 
-**zrepo-rs** est un lanceur de projets open source, écrit en Rust, pour **Linux**,
-**macOS** et **Windows**. Sa fenêtre flottante rassemble vos projets et vous permet
-de retrouver le bon dépôt en quelques frappes grâce à la recherche floue.
+**Zéro détour vers vos projets.** Un dossier local, un serveur SSH, un dépôt
+GitHub : où que se trouve votre code, retrouvez-le en quelques frappes.
+**zrepo-rs** est un lanceur de projets open source, écrit en Rust pour **Linux**,
+**macOS** et **Windows**. Sa fenêtre flottante réunit vos projets et sa recherche
+floue vous mène directement au bon endroit.
 
 Il réunit au même endroit :
 
@@ -28,9 +31,11 @@ s'installe à côté de l'ancien `zrepo` sans le remplacer.
 
 ## English
 
-**zrepo-rs** is an open source project launcher written in Rust for **Linux**,
-**macOS**, and **Windows**. Its floating window brings your projects together,
-so you can find the right repository in a few keystrokes with fuzzy search.
+**From repo to editor, without the detour.** Local folder, SSH server, GitHub
+repository: wherever your code lives, find it in a few keystrokes. **zrepo-rs**
+is an open source project launcher written in Rust for **Linux**, **macOS**, and
+**Windows**. Its floating window and fuzzy search bring your projects into one
+place, ready to open.
 
 It brings together:
 
