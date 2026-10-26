@@ -133,9 +133,12 @@ pub fn completed() -> Option<(OsString, Vec<PathBuf>)> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::{ffi::OsStr, path::PathBuf};
 
-    use super::{merge_paths, path_from_env_output};
+    #[cfg(unix)]
+    use super::merge_paths;
+    use super::path_from_env_output;
 
     #[cfg(unix)]
     #[test]
