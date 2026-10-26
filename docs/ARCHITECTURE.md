@@ -108,7 +108,6 @@ pub mod auth {
     pub enum Poll { Pending, SlowDown, Done(String) }
     pub fn device_poll(client_id: &str, dc: &DeviceCode) -> Res<Poll>;   // un seul appel, non bloquant au-delà de la requête
     pub fn gh_cli_token() -> Option<String>;
-    pub fn keyring_pending() -> bool;   // accès au trousseau en cours (macOS : peut afficher une demande de mot de passe)
 }
 pub mod sources {   // chaque source est indépendante, appelable depuis un thread
     pub fn locals(cfg: &Config) -> Vec<Entry>;
@@ -172,8 +171,8 @@ Sous Windows, le binaire est `windows_subsystem = "windows"`. On rattache la con
 (`AttachConsole`) pour les sous-commandes texte.
 
 ### Fenêtre de lancement (eframe/egui)
-- Fenêtre sans bordure, centrée, d'environ 760×520, toujours au premier plan, coins arrondis, ombre.
-  Elle se ferme avec Échap ou quand elle perd le focus.
+- Fenêtre sans bordure, centrée, d'environ 760×520, coins arrondis, ombre.
+  Elle se ferme avec Échap ; elle reste ouverte quand elle perd le focus.
 - Champ de recherche en haut (focus immédiat), recherche floue `nucleo-matcher` avec les lettres trouvées surlignées.
 - Filtres en pastilles : Tous, Locaux, Serveurs, GitHub, avec un compteur pour chacun.
 - Liste virtualisée. Chaque ligne a une icône par type, le nom, l'owner ou le serveur, et un badge de visibilité.

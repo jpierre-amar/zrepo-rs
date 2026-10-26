@@ -2,7 +2,6 @@
 //!
 //! Variables cachées, pour le débogage et les captures d'écran :
 //! - `ZREPO_RS_DEBUG_SETUP_STEP=n` : l'assistant s'ouvre à l'étape n (1 à 7) ;
-//! - `ZREPO_RS_DEBUG_KEEP_OPEN=1` : le lanceur ne se ferme pas en perdant le focus ;
 //! - `ZREPO_RS_DEBUG_QUERY=texte` : recherche pré-remplie ;
 //! - `ZREPO_RS_DEBUG_THEME=light|dark` : force le thème ;
 //! - `ZREPO_RS_DEBUG_DEVICE_CODE=ABCD-1234` : écran du code GitHub sans réseau.
@@ -16,7 +15,6 @@ use std::{
     cell::Cell,
     process::{Command, Stdio},
     rc::Rc,
-    time::{Duration, Instant},
 };
 
 use eframe::egui::{
@@ -43,9 +41,6 @@ pub enum Mode {
 const CARD: [f32; 2] = [760.0, 540.0];
 const MARGIN: f32 = 18.0;
 const RADIUS: u8 = 14;
-/// Délai avant de fermer sur perte du focus : le compositeur peut donner le
-/// focus un peu après l'affichage.
-const FOCUS_GRACE: Duration = Duration::from_millis(700);
 
 pub fn icon() -> egui::IconData {
     eframe::icon_data::from_png_bytes(include_bytes!("../../../../packaging/zrepo-rs.png"))
@@ -70,7 +65,6 @@ pub fn run(mode: Mode) -> i32 {
             .with_decorations(false)
             .with_transparent(true)
             .with_resizable(false)
-            .with_always_on_top()
     } else {
         base.with_title("zrepo-rs — configuration")
             .with_inner_size([720.0, 580.0])
@@ -111,9 +105,6 @@ struct App {
     frameless: bool,
     exit: Rc<Cell<i32>>,
     keys: Vec<(Key, Modifiers)>,
-    started: Instant,
-    ever_focused: bool,
-    keep_open: bool,
     theme_done: bool,
 }
 
@@ -128,9 +119,6 @@ impl App {
             frameless: false,
             exit,
             keys: Vec::new(),
-            started: Instant::now(),
-            ever_focused: false,
-            keep_open: std::env::var_os("ZREPO_RS_DEBUG_KEEP_OPEN").is_some(),
             theme_done: false,
         };
         match mode {
@@ -249,23 +237,6 @@ impl App {
                 setup.show_targets(&ctx);
             }
             self.setup = Some(setup);
-            return;
-        }
-
-        // Fermeture à la perte du focus, sauf pendant une ouverture ou une erreur.
-        let focused = ctx.input(|i| i.viewport().focused);
-        if focused == Some(true) {
-            self.ever_focused = true;
-        }
-        // macOS peut demander le mot de passe du trousseau : sa fenêtre prend le
-        // focus. Pendant l'accès, et ensuite tant que le lanceur n'a pas repris
-        // le focus, on ne ferme pas.
-        if cfg!(target_os = "macos") && zrepo_core::auth::keyring_pending() {
-            self.ever_focused = false;
-        }
-        let grace = self.started.elapsed() < FOCUS_GRACE;
-        if focused == Some(false) && self.ever_focused && !grace && !l.busy() && !self.keep_open {
-            self.close(&ctx, EX_CANCEL);
         }
     }
 }

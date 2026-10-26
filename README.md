@@ -210,8 +210,7 @@ Dans la fenêtre : **Entrée** ouvre, **Ctrl-E** ouvre dans Zed, **Ctrl-Y** dans
 Les réglages s'ouvrent sur **Cibles** pour modifier la cible par défaut ; le bouton
 « Configurer les serveurs » ouvre directement l'étape **Serveurs**.
 Faites glisser la poignée à six points, à gauche du champ de recherche, pour déplacer la fenêtre.
-La fenêtre se ferme aussi quand elle perd le focus, sauf pendant un clonage ou
-quand une erreur est affichée.
+La fenêtre reste ouverte quand vous cliquez ailleurs : fermez-la avec **Échap**.
 
 ## Configuration
 
@@ -410,7 +409,6 @@ Non documentées dans `--help`, elles servent aux captures d'écran et aux tests
 | Variable | Effet |
 |---|---|
 | `ZREPO_RS_DEBUG_SETUP_STEP=n` | l'assistant s'ouvre directement à l'étape n (1 à 6 ; l'étape 6 enregistre `config.toml`) |
-| `ZREPO_RS_DEBUG_KEEP_OPEN=1` | le lanceur ne se ferme pas quand il perd le focus |
 | `ZREPO_RS_DEBUG_QUERY=texte` | recherche pré-remplie |
 | `ZREPO_RS_DEBUG_THEME=light` ou `dark` | force le thème (sinon : `gsettings` sous Linux, le système ailleurs) |
 | `ZREPO_RS_DEBUG_DEVICE_CODE=ABCD-1234` | affiche l'écran du code GitHub sans contacter GitHub (binaire compilé avec un client OAuth) |

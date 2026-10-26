@@ -5,7 +5,6 @@ use std::{
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, Sender},
     thread,
-    time::{Duration, Instant},
 };
 
 use eframe::egui::{
@@ -80,7 +79,6 @@ pub struct Launcher {
     ssh_states: HashMap<String, Option<sources::SshStatus>>,
     ssh_tx: Sender<(String, sources::SshStatus)>,
     ssh_rx: Receiver<(String, sources::SshStatus)>,
-    drag_grace_until: Option<Instant>,
     entries: Vec<Entry>,
     matcher: Matcher,
     query: String,
@@ -132,7 +130,6 @@ impl Launcher {
             ssh_states: HashMap::new(),
             ssh_tx,
             ssh_rx,
-            drag_grace_until: None,
             entries: Vec::new(),
             matcher: Matcher::new(MatcherConfig::DEFAULT),
             query: std::env::var("ZREPO_RS_DEBUG_QUERY").unwrap_or_default(),
@@ -185,15 +182,12 @@ impl Launcher {
         self.target = open::pick_target(&want, &self.targets);
     }
 
-    /// Doit-on garder la fenêtre ouverte malgré la perte du focus ?
+    /// Une ouverture, une erreur ou la mise à jour occupe la fenêtre : la liste est inactive.
     pub fn busy(&self) -> bool {
         self.opening.is_some()
             || self.failure.is_some()
             || self.update_popup
             || self.update_rx.is_some()
-            || self
-                .drag_grace_until
-                .is_some_and(|until| Instant::now() < until)
     }
 
     /// Trois sources en parallèle. Les résultats d'un chargement précédent
@@ -601,9 +595,6 @@ impl Launcher {
             .on_hover_text("Déplacer la fenêtre");
         if drag.drag_started_by(egui::PointerButton::Primary) {
             ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
-        }
-        if drag.drag_started() || drag.dragged() {
-            self.drag_grace_until = Some(Instant::now() + Duration::from_secs(5));
         }
         for x in [20.0, 26.0] {
             for y in [-4.0, 0.0, 4.0] {
