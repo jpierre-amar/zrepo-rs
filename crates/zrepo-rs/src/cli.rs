@@ -58,6 +58,11 @@ pub enum Command {
     Update {
         install: bool,
     },
+    /// Interne : écoute le raccourci global (`zrepo-rs agent <touches> --open <app>`).
+    Agent {
+        keys: String,
+        open: String,
+    },
     Help,
     Version,
 }
@@ -79,6 +84,16 @@ pub fn parse(args: &[String]) -> Res<Command> {
             [arg, ..] => Err(unknown(arg)),
         },
         Some("help") => Ok(Command::Help),
+        Some("agent") => match rest {
+            [keys, flag, open] if flag == "--open" => Ok(Command::Agent {
+                keys: keys.clone(),
+                open: open.clone(),
+            }),
+            _ => Err(Fail::new(
+                EX_FAIL,
+                "Usage interne : zrepo-rs agent <touches> --open <app>",
+            )),
+        },
         _ => parse_launcher(args),
     }
 }
@@ -275,6 +290,14 @@ mod tests {
         );
         assert_eq!(p(&["--bogus"]).unwrap_err().code, EX_FAIL);
         assert_eq!(p(&["setup", "x"]).unwrap_err().code, EX_FAIL);
+        assert_eq!(
+            p(&["agent", "Alt+Space", "--open", "/Applications/zrepo-rs.app"]).unwrap(),
+            Command::Agent {
+                keys: "Alt+Space".into(),
+                open: "/Applications/zrepo-rs.app".into()
+            }
+        );
+        assert!(p(&["agent", "Alt+Space"]).is_err());
     }
 
     #[test]

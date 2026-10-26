@@ -102,6 +102,12 @@ pub struct HerdrConfig {
 #[serde(default)]
 pub struct UiConfig {
     pub default_target: Target,
+    /// Raccourci clavier global, « Ctrl+Alt+R » ; vide = aucun (voir `shortcut`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub shortcut: String,
+    /// Libellé affiché du raccourci, s'il diffère de la forme texte.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub shortcut_label: String,
 }
 
 impl Default for GithubConfig {
@@ -137,6 +143,8 @@ impl Default for UiConfig {
     fn default() -> Self {
         Self {
             default_target: Target::Zed,
+            shortcut: String::new(),
+            shortcut_label: String::new(),
         }
     }
 }
@@ -408,5 +416,18 @@ command = "gvim"
         assert_eq!(cfg.remote.servers[0].paths, ["/home/jp/app"]);
         let back = Config::parse(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
         assert_eq!(back.remote.servers, cfg.remote.servers);
+    }
+
+    #[test]
+    fn raccourci_absent_ou_enregistre() {
+        let cfg = Config::default();
+        assert!(cfg.ui.shortcut.is_empty());
+        assert!(!toml::to_string_pretty(&cfg).unwrap().contains("shortcut"));
+        let mut cfg = cfg;
+        cfg.ui.shortcut = "Alt+Space".into();
+        cfg.ui.shortcut_label = "⌥ Espace".into();
+        let back = Config::parse(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
+        assert_eq!(back.ui.shortcut, "Alt+Space");
+        assert_eq!(back.ui.shortcut_label, "⌥ Espace");
     }
 }

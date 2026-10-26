@@ -17,8 +17,13 @@ nucleo-matcher = "0.3.1"
 rfd = "0.17.2"
 zrepo-core = { path = "../zrepo-core" }
 
+# Agent du raccourci clavier global (macOS et Windows).
+[target."cfg(any(target_os = \"macos\", windows))".dependencies]
+global-hotkey = "0.8.0"
+winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
+
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 embed-resource = "3.0.12"

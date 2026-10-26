@@ -530,6 +530,10 @@ impl Launcher {
         {
             action = Action::Close(code);
         }
+        // Par-dessus tout le reste : on peut réduire ou fermer à tout moment.
+        if let Some(a) = window_buttons(ui, header, &pal) {
+            action = a;
+        }
         self.update_window(&ctx);
         action
     }
@@ -613,7 +617,7 @@ impl Launcher {
             plural(self.matches.len(), "résultat", "résultats")
         };
         let cw = theme::text_width(ui, &count, FontId::proportional(12.5)).x;
-        let right = rect.right() - 20.0;
+        let right = rect.right() - WINDOW_BUTTONS_W - 8.0;
         ui.painter().text(
             pos2(right, rect.center().y),
             egui::Align2::RIGHT_CENTER,
@@ -1285,6 +1289,56 @@ fn visibility_badge(e: &Entry, pal: &Pal) -> (&'static str, Color32, Color32) {
         Kind::Github if e.visibility == "private" => ("privé", text(pal.accent), soft(pal.accent)),
         Kind::Github => ("public", text(pal.ok), soft(pal.ok)),
     }
+}
+
+/// Place des boutons Réduire et Fermer, à droite de l'en-tête.
+const WINDOW_BUTTONS_W: f32 = 76.0;
+
+/// La fenêtre n'a pas de barre de titre : ses boutons sont dessinés ici.
+/// Réduire envoie la commande au système ; Fermer rend `Action::Close`.
+fn window_buttons(ui: &mut egui::Ui, header: Rect, pal: &Pal) -> Option<Action> {
+    let size = vec2(28.0, 28.0);
+    let y = header.center().y;
+    let close = Rect::from_center_size(pos2(header.right() - 16.0 - size.x / 2.0, y), size);
+    let minimize = close.translate(vec2(-(size.x + 6.0), 0.0));
+    let mut action = None;
+
+    let r = ui
+        .interact(minimize, ui.id().with("window_minimize"), Sense::click())
+        .on_hover_text("Réduire");
+    let color = if r.hovered() { pal.text } else { pal.weak };
+    if r.hovered() {
+        ui.painter()
+            .rect_filled(minimize, CornerRadius::same(6), pal.hover);
+    }
+    let c = minimize.center();
+    ui.painter().line_segment(
+        [pos2(c.x - 5.0, c.y), pos2(c.x + 5.0, c.y)],
+        Stroke::new(1.5, color),
+    );
+    if r.clicked() {
+        ui.ctx().send_viewport_cmd(ViewportCommand::Minimized(true));
+    }
+
+    let r = ui
+        .interact(close, ui.id().with("window_close"), Sense::click())
+        .on_hover_text("Fermer (Échap)");
+    let color = if r.hovered() { pal.error } else { pal.weak };
+    if r.hovered() {
+        ui.painter()
+            .rect_filled(close, CornerRadius::same(6), pal.error.gamma_multiply(0.14));
+    }
+    let c = close.center();
+    for (a, b) in [(-4.5, 4.5), (4.5, -4.5)] {
+        ui.painter().line_segment(
+            [pos2(c.x - 4.5, c.y + a), pos2(c.x + 4.5, c.y + b)],
+            Stroke::new(1.5, color),
+        );
+    }
+    if r.clicked() {
+        action = Some(Action::Close(zrepo_core::error::EX_CANCEL));
+    }
+    action
 }
 
 #[cfg(test)]

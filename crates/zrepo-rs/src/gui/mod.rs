@@ -173,7 +173,8 @@ impl App {
     fn setup_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let Some(setup) = &mut self.setup else { return };
-        let escape = setup.embedded() && ctx.input(|i| i.key_pressed(Key::Escape));
+        let escape =
+            setup.embedded() && !setup.capturing() && ctx.input(|i| i.key_pressed(Key::Escape));
         let outcome = setup.ui(ui);
         let embedded = setup.embedded();
         // Fermée par la croix du gestionnaire de fenêtres : le code dit si la

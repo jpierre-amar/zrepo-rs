@@ -210,7 +210,8 @@ Dans la fenêtre : **Entrée** ouvre, **Ctrl-E** ouvre dans Zed, **Ctrl-Y** dans
 Les réglages s'ouvrent sur **Cibles** pour modifier la cible par défaut ; le bouton
 « Configurer les serveurs » ouvre directement l'étape **Serveurs**.
 Faites glisser la poignée à six points, à gauche du champ de recherche, pour déplacer la fenêtre.
-La fenêtre reste ouverte quand vous cliquez ailleurs : fermez-la avec **Échap**.
+La fenêtre reste ouverte quand vous cliquez ailleurs : les boutons en haut à droite la
+**réduisent** ou la **ferment** (comme **Échap**).
 
 ## Configuration
 
@@ -285,6 +286,28 @@ le trousseau, lui-même avant `gh auth token`.
 
 ## Raccourci clavier
 
+Dans les réglages (**Ctrl-,**, étape **Raccourci**) ou `zrepo-rs setup` : cliquez sur
+« Changer », puis appuyez sur la combinaison voulue (au moins Ctrl, Alt, Maj ou ⌘, avec une
+lettre, un chiffre, Espace ou F1 à F24 ; Échap annule).
+
+- **macOS et Windows** : « Activer ». Un petit agent zrepo-rs, sans fenêtre, démarre avec votre
+  session et écoute la combinaison : il ouvre le lanceur, ou le ramène devant s'il est déjà
+  ouvert. « Désactiver » le retire. Suggestion : **⌥ Espace** sous macOS, **Ctrl + Alt + R**
+  sous Windows. Sous Windows, une combinaison déjà prise est signalée par l'assistant. macOS,
+  lui, ne signale rien : si la combinaison n'ouvre pas zrepo-rs, elle est sans doute déjà
+  utilisée par le système (⌘ Espace : Spotlight) ou par une autre app ; choisissez-en une autre.
+  - macOS : copie de l'agent dans `~/Library/Application Support/zrepo-rs/zrepo-rs-agent.app`,
+    démarrage par `~/Library/LaunchAgents/io.github.jpierre-amar.zrepo-rs.agent.plist`.
+  - Windows : copie dans `%LOCALAPPDATA%\zrepo-rs\agent`, démarrage par la valeur
+    `zrepo-rs-agent` de `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+  - Après une mise à jour de zrepo-rs, cliquez de nouveau sur « Activer » pour mettre l'agent
+    à jour (l'ancien continue de fonctionner en attendant).
+- **Hyprland** : la combinaison choisie est écrite dans votre configuration, avec un aperçu,
+  puis seulement après un clic sur « Appliquer » (voir ci-dessous).
+- **GNOME, KDE et autres bureaux Linux** : sous Wayland, une application ne peut pas capter une
+  touche globale. L'assistant affiche la combinaison et la commande à associer dans les
+  réglages du bureau (voir ci-dessous).
+
 Pointez le raccourci vers le chemin complet du binaire si son dossier n'est pas dans le
 `PATH` de votre session graphique (par exemple `~/.local/bin/zrepo-rs`).
 
@@ -334,11 +357,6 @@ existants.
 **KDE Plasma** : Configuration du système → Clavier → Raccourcis → « Ajouter une application »
 → zrepo-rs, puis attribuez Meta+R.
 
-**macOS** : app **Raccourcis** → nouveau raccourci → action « Ouvrir l'app » → `zrepo-rs`
-(dans `~/Applications`) ; puis, dans les détails du raccourci, « Ajouter un raccourci clavier ».
-
-**Windows** : menu Démarrer → clic droit sur zrepo-rs → Ouvrir l'emplacement du fichier →
-clic droit sur le raccourci → Propriétés → champ « Touche de raccourci » (par exemple Ctrl+Alt+R).
 
 ## Désinstallation
 
@@ -353,9 +371,19 @@ rm -rf ~/.config/zrepo-rs ~/.cache/zrepo-rs          # configuration et cache (f
 macOS :
 
 ```sh
+launchctl bootout gui/$(id -u)/io.github.jpierre-amar.zrepo-rs.agent 2>/dev/null   # agent du raccourci
+rm -f ~/Library/LaunchAgents/io.github.jpierre-amar.zrepo-rs.agent.plist
 rm -f ~/.local/bin/zrepo-rs                 # lien vers le binaire de l'app
 rm -rf ~/Applications/zrepo-rs.app
 rm -rf ~/Library/Application\ Support/zrepo-rs ~/Library/Caches/zrepo-rs   # facultatif
+```
+
+Windows : si le raccourci clavier est actif, cliquez d'abord sur « Désactiver » dans
+`zrepo-rs setup` (étape Raccourci), ou bien :
+
+```powershell
+Stop-Process -Name zrepo-rs-agent -ErrorAction SilentlyContinue
+Remove-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' zrepo-rs-agent -ErrorAction SilentlyContinue
 ```
 
 Windows, installé par le setup : **Paramètres → Applications → Applications installées →

@@ -139,6 +139,16 @@ pub mod path {   // PATH du processus
     pub fn note_added(added: Vec<PathBuf>);                   // appelé par main après set_var
     pub fn added() -> Option<&'static [PathBuf]>;             // pour doctor
 }
+pub mod shortcut {   // combinaison globale, « Ctrl+Alt+R » ([ui] shortcut / shortcut_label)
+    pub struct Shortcut { pub ctrl, pub alt, pub shift, pub super_key: bool, pub key: String }
+    impl Shortcut {
+        pub fn parse(s: &str) -> Option<Shortcut>;   // au moins un modificateur, sauf F1–F24
+        pub fn suggested() -> Shortcut;               // ⌥ Espace, Ctrl+Alt+R, Super+R
+        pub fn label(&self) -> String;
+        pub fn hypr_lua(&self) -> String;             // « SUPER + ALT + R »
+        pub fn hypr_conf(&self) -> (String, String);  // (« SUPER ALT », « R »)
+    }
+}
 pub mod doctor { pub struct Check { pub ok: bool, pub label: String, pub detail: String }  pub fn run(cfg: &Config) -> Vec<Check>; }
 ```
 
@@ -172,7 +182,8 @@ Sous Windows, le binaire est `windows_subsystem = "windows"`. On rattache la con
 
 ### Fenêtre de lancement (eframe/egui)
 - Fenêtre sans bordure, centrée, d'environ 760×520, coins arrondis, ombre.
-  Elle se ferme avec Échap ; elle reste ouverte quand elle perd le focus.
+  Elle reste ouverte quand elle perd le focus ; boutons Réduire et Fermer en haut à droite,
+  Échap ferme aussi.
 - Champ de recherche en haut (focus immédiat), recherche floue `nucleo-matcher` avec les lettres trouvées surlignées.
 - Filtres en pastilles : Tous, Locaux, Serveurs, GitHub, avec un compteur pour chacun.
 - Liste virtualisée. Chaque ligne a une icône par type, le nom, l'owner ou le serveur, et un badge de visibilité.
@@ -194,8 +205,13 @@ Sous Windows, le binaire est `windows_subsystem = "windows"`. On rattache la con
    et un polling en arrière-plan), ou un jeton collé, ou le jeton de gh, ou « Plus tard ». Affiche « Connecté en tant que @login ».
 4. Cibles : Zed, Herdr, terminal et éditeurs connus détectés ou non ; « Mes éditeurs » (ajout d'un exécutable
    avec le sélecteur de fichiers, retrait) ; cible par défaut parmi les cibles disponibles.
-5. Raccourci clavier : sous Hyprland, proposer d'ajouter `SUPER + R` (montrer la ligne, l'ajouter seulement si l'utilisateur confirme).
-   Sous les autres OS, expliquer comment créer le raccourci (sous macOS via Raccourcis, sous Windows via les propriétés du raccourci du menu Démarrer).
+5. Raccourci clavier : « Changer » puis la combinaison au clavier (Échap annule). Sous macOS et Windows,
+   « Activer » installe l'agent (`agent.rs`) : une copie du binaire, lancée à l'ouverture de session
+   (LaunchAgent / clé `Run`), qui écoute la combinaison (`global-hotkey`, boucle `winit`) et ouvre le
+   lanceur ou le ramène devant (`open <app>` sous macOS, `FindWindow` + `SetForegroundWindow` sous
+   Windows). C'est une copie : sous macOS, un processus du bundle serait pris pour l'app par le Finder ;
+   sous Windows, l'exécutable en service ne pourrait pas être mis à jour. Sous Hyprland, la combinaison
+   choisie est écrite (aperçu, puis confirmation) ; ailleurs sous Linux, instructions avec la combinaison.
 6. Terminé : enregistre `config.toml` et propose d'ouvrir le lanceur.
 
 ## Distribution

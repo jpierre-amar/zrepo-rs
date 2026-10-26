@@ -21,11 +21,12 @@ use zrepo_core::{
     auth::{self, DeviceCode, Poll, TokenSource},
     config::{Config, RemoteServer},
     open::{self, Target},
+    shortcut::Shortcut,
     sources,
 };
 
 use super::theme::{self, Pal};
-use crate::{detect, hypr};
+use crate::{agent, detect, hypr};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Step {
@@ -122,6 +123,15 @@ pub struct Setup {
     exe: PathBuf,
     shortcut: Option<Result<hypr::Proposal, String>>,
     applied: Option<Result<Vec<PathBuf>, String>>,
+    /// Combinaison affichée (celle de config.toml, ou la suggestion).
+    sc: Shortcut,
+    sc_label: String,
+    /// En attente de la combinaison au clavier.
+    recording: bool,
+    record_error: Option<String>,
+    /// macOS et Windows : l'agent écoute-t-il la combinaison de config.toml ?
+    agent_active: bool,
+    agent_error: Option<String>,
     saved: Option<Result<PathBuf, String>>,
     logo: Option<egui::TextureHandle>,
 }
@@ -134,6 +144,13 @@ impl Setup {
             .ok()
             .and_then(|p| p.canonicalize().ok())
             .unwrap_or_else(|| PathBuf::from("zrepo-rs"));
+        let saved_sc = Shortcut::parse(&cfg.ui.shortcut);
+        let sc = saved_sc.clone().unwrap_or_else(Shortcut::suggested);
+        let sc_label = match &cfg.ui.shortcut_label {
+            l if saved_sc.is_some() && !l.is_empty() => l.clone(),
+            _ => sc.label(),
+        };
+        let agent_active = saved_sc.is_some() && agent::installed();
         let mut s = Self {
             folder: cfg.projects_dir.display().to_string(),
             cfg,
@@ -169,6 +186,12 @@ impl Setup {
             exe,
             shortcut: None,
             applied: None,
+            sc,
+            sc_label,
+            recording: false,
+            record_error: None,
+            agent_active,
+            agent_error: None,
             saved: None,
             logo: None,
         };
@@ -189,6 +212,11 @@ impl Setup {
         matches!(self.saved, Some(Ok(_)))
     }
 
+    /// En attente d'une combinaison : Échap annule la saisie, pas l'assistant.
+    pub fn capturing(&self) -> bool {
+        self.recording
+    }
+
     /// Ouvert depuis le lanceur (Ctrl-,) : Échap y revient sans enregistrer.
     pub fn embedded(&self) -> bool {
         self.embedded
@@ -204,7 +232,7 @@ impl Setup {
 
     fn enter(&mut self, ctx: &egui::Context, step: Step) {
         if step == Step::Shortcut && self.shortcut.is_none() && hypr::running() {
-            self.shortcut = Some(hypr::propose(&self.exe));
+            self.shortcut = Some(hypr::propose(&self.exe, &self.sc));
         }
         if step == Step::Targets {
             self.refresh_targets();
@@ -1455,30 +1483,266 @@ impl Setup {
             "Raccourci clavier",
             "Pour appeler zrepo-rs d'une touche, depuis n'importe où.",
         );
-        let exe = self.exe.display().to_string();
-        if hypr::running() {
-            self.hyprland_ui(ui, pal, &exe);
-            return;
+        if self.recording {
+            self.capture(ui);
         }
-        let steps: &[&str] = if cfg!(target_os = "macos") {
-            &[
-                "Ouvrez l'app Raccourcis, puis créez un raccourci.",
-                "Ajoutez l'action « Ouvrir l'app » et choisissez zrepo-rs (dans ~/Applications).",
-                "Dans les détails du raccourci : « Ajouter un raccourci clavier ».",
-            ]
-        } else if cfg!(windows) {
-            &[
-                "Menu Démarrer : clic droit sur zrepo-rs, « Ouvrir l'emplacement du fichier ».",
-                "Clic droit sur le raccourci zrepo-rs, puis « Propriétés ».",
-                "Champ « Touche de raccourci » : par exemple Ctrl + Alt + R.",
-            ]
+        self.combination_ui(ui, pal);
+        ui.add_space(14.0);
+        if agent::SUPPORTED {
+            self.agent_ui(ui, pal);
+        } else if hypr::running() {
+            let exe = self.exe.display().to_string();
+            self.hyprland_ui(ui, pal, &exe);
         } else {
-            &[
-                "GNOME : Paramètres → Clavier → Raccourcis personnalisés → « + ».",
-                "KDE Plasma : Configuration du système → Raccourcis → Ajouter une application.",
-                "Autre bureau : associez une touche à la commande ci-dessous.",
-            ]
-        };
+            self.manual_ui(ui, pal);
+        }
+    }
+
+    /// La combinaison, et le bouton pour en saisir une autre.
+    fn combination_ui(&mut self, ui: &mut egui::Ui, pal: &Pal) {
+        card(ui, pal, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("Combinaison").size(13.5).color(pal.weak));
+                ui.add_space(8.0);
+                let (text, color) = if self.recording {
+                    ("Appuyez sur les touches…".to_string(), pal.accent)
+                } else {
+                    (self.sc_label.clone(), pal.text)
+                };
+                egui::Frame::new()
+                    .fill(pal.bg)
+                    .stroke(Stroke::new(
+                        1.0,
+                        if self.recording {
+                            pal.accent
+                        } else {
+                            pal.border
+                        },
+                    ))
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(egui::Margin::symmetric(12, 6))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(text).size(15.0).strong().color(color));
+                    });
+                ui.add_space(8.0);
+                if self.recording {
+                    if theme::button(ui, "Annuler", false).clicked() {
+                        self.recording = false;
+                    }
+                } else if theme::button(ui, "Changer", false).clicked() {
+                    self.recording = true;
+                    self.record_error = None;
+                }
+                // egui ne voit pas la touche Super hors macOS : on la coche.
+                if !cfg!(target_os = "macos") && !cfg!(windows) {
+                    let mut sup = self.sc.super_key;
+                    if ui.checkbox(&mut sup, "avec Super").changed() {
+                        let mut sc = self.sc.clone();
+                        sc.super_key = sup;
+                        if Shortcut::parse(&sc.to_string()).is_some() {
+                            let label = sc.label();
+                            self.set_shortcut(sc, label);
+                        }
+                    }
+                }
+            });
+            if self.recording {
+                let mods = if cfg!(target_os = "macos") {
+                    "⌃, ⌥, ⇧ ou ⌘"
+                } else {
+                    "Ctrl, Alt ou Maj"
+                };
+                ui.add_space(6.0);
+                ui.label(
+                    RichText::new(format!(
+                        "Maintenez {mods}, puis appuyez sur une lettre, un chiffre, Espace \
+                         ou une touche F1 à F24. Échap annule."
+                    ))
+                    .size(12.5)
+                    .color(pal.faint),
+                );
+            }
+            if let Some(e) = &self.record_error {
+                ui.add_space(6.0);
+                status(ui, pal.error, e);
+            }
+        });
+    }
+
+    /// Lit la combinaison tapée pendant la saisie.
+    fn capture(&mut self, ui: &egui::Ui) {
+        let events = ui.input(|i| i.events.clone());
+        for e in events {
+            let egui::Event::Key {
+                key,
+                physical_key,
+                pressed: true,
+                modifiers,
+                ..
+            } = e
+            else {
+                continue;
+            };
+            if key == egui::Key::Escape {
+                self.recording = false;
+                return;
+            }
+            // Sous macOS, le raccourci global vise une position de touche ;
+            // Windows et Hyprland, la lettre affichée.
+            let code = if cfg!(target_os = "macos") {
+                physical_key.unwrap_or(key)
+            } else {
+                key
+            };
+            let sc = Shortcut {
+                ctrl: modifiers.ctrl,
+                alt: modifiers.alt,
+                shift: modifiers.shift,
+                super_key: if cfg!(target_os = "macos") {
+                    modifiers.mac_cmd
+                } else {
+                    self.sc.super_key
+                },
+                key: code.name().to_string(),
+            };
+            match Shortcut::parse(&sc.to_string()) {
+                Some(sc) => {
+                    let shown = if key == egui::Key::Space {
+                        "Espace"
+                    } else {
+                        key.name()
+                    };
+                    let label = sc.label_with(Some(shown));
+                    self.recording = false;
+                    self.set_shortcut(sc, label);
+                    return;
+                }
+                None => {
+                    self.record_error = Some(
+                        "Ajoutez au moins une touche de modification, avec une lettre, \
+                         un chiffre, Espace ou F1 à F24."
+                            .into(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn set_shortcut(&mut self, sc: Shortcut, label: String) {
+        self.sc = sc;
+        self.sc_label = label;
+        self.record_error = None;
+        self.agent_error = None;
+        if hypr::running() {
+            self.shortcut = Some(hypr::propose(&self.exe, &self.sc));
+            self.applied = None;
+        }
+    }
+
+    /// Retient la combinaison, ou son absence (None), dans config.toml. Si le
+    /// fichier existe déjà, il est mis à jour tout de suite : la combinaison
+    /// est en service même si l'on quitte l'assistant sans enregistrer.
+    fn remember_shortcut(&mut self, sc: Option<(&Shortcut, &str)>) {
+        let (keys, label) = sc.map_or((String::new(), String::new()), |(s, l)| {
+            (s.to_string(), l.to_string())
+        });
+        self.cfg.ui.shortcut = keys.clone();
+        self.cfg.ui.shortcut_label = label.clone();
+        if Config::exists()
+            && let Ok(mut disk) = Config::load()
+        {
+            disk.ui.shortcut = keys;
+            disk.ui.shortcut_label = label;
+            let _ = disk.save();
+        }
+    }
+
+    /// macOS et Windows : un agent, lancé avec la session, écoute la combinaison.
+    fn agent_ui(&mut self, ui: &mut egui::Ui, pal: &Pal) {
+        let current = self.agent_active && self.cfg.ui.shortcut == self.sc.to_string();
+        let mut activate = false;
+        let mut deactivate = false;
+        if current {
+            status(
+                ui,
+                pal.ok,
+                &format!(
+                    "Actif : {} ouvre zrepo-rs, ou le ramène devant s'il est déjà ouvert.",
+                    self.sc_label
+                ),
+            );
+            ui.add_space(8.0);
+            deactivate = theme::button(ui, "Désactiver", false).clicked();
+        } else {
+            ui.horizontal(|ui| {
+                activate = theme::button(ui, "Activer", true).clicked();
+                if self.agent_active {
+                    ui.label(
+                        RichText::new("remplace la combinaison en service")
+                            .size(12.5)
+                            .color(pal.faint),
+                    );
+                }
+            });
+        }
+        if let Some(e) = &self.agent_error {
+            ui.add_space(8.0);
+            status(ui, pal.error, e);
+        }
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new(
+                "Un petit agent zrepo-rs démarre avec votre session pour écouter cette \
+                 combinaison. Il n'a pas de fenêtre et n'accède ni au réseau ni au trousseau.",
+            )
+            .size(12.0)
+            .color(pal.faint),
+        );
+        if cfg!(target_os = "macos") {
+            ui.label(
+                RichText::new(
+                    "macOS ne signale pas une combinaison déjà prise : si elle n'ouvre pas \
+                     zrepo-rs, choisissez-en une autre (⌘ Espace est réservé à Spotlight).",
+                )
+                .size(12.0)
+                .color(pal.faint),
+            );
+        }
+        if activate {
+            match agent::install(&self.sc) {
+                Ok(()) => {
+                    self.agent_active = true;
+                    self.agent_error = None;
+                    let (sc, label) = (self.sc.clone(), self.sc_label.clone());
+                    self.remember_shortcut(Some((&sc, &label)));
+                }
+                Err(e) => self.agent_error = Some(e),
+            }
+        }
+        if deactivate {
+            match agent::uninstall() {
+                Ok(()) => {
+                    self.agent_active = false;
+                    self.agent_error = None;
+                    self.remember_shortcut(None);
+                }
+                Err(e) => self.agent_error = Some(e),
+            }
+        }
+    }
+
+    /// Autres bureaux Linux : la combinaison se règle dans le bureau.
+    fn manual_ui(&mut self, ui: &mut egui::Ui, pal: &Pal) {
+        let exe = self.exe.display().to_string();
+        let steps = [
+            "GNOME : Paramètres → Clavier → Raccourcis personnalisés → « + ».".to_string(),
+            "KDE Plasma : Configuration du système → Raccourcis → Ajouter une application."
+                .to_string(),
+            format!(
+                "Associez {} à la commande ci-dessous (autre bureau : même principe).",
+                self.sc_label
+            ),
+        ];
         card(ui, pal, |ui| {
             for (i, s) in steps.iter().enumerate() {
                 ui.label(
@@ -1500,6 +1764,10 @@ impl Setup {
                 ui.ctx().copy_text(exe.clone());
             }
         });
+        if self.cfg.ui.shortcut != self.sc.to_string() {
+            let (sc, label) = (self.sc.clone(), self.sc_label.clone());
+            self.remember_shortcut(Some((&sc, &label)));
+        }
     }
 
     fn hyprland_ui(&mut self, ui: &mut egui::Ui, pal: &Pal, exe: &str) {
@@ -1510,19 +1778,21 @@ impl Setup {
                 status(ui, pal.error, e);
                 ui.add_space(8.0);
                 ui.label(RichText::new("Ajoutez à la main, par exemple :").color(pal.weak));
+                let (mods, key) = self.sc.hypr_conf();
                 code_line(
                     ui,
                     pal,
-                    &format!("bindd = SUPER, R, Projets (zrepo-rs), exec, {exe}"),
+                    &format!("bindd = {mods}, {key}, Projets (zrepo-rs), exec, {exe}"),
                 );
             }
             Some(Ok(p)) => {
                 ui.horizontal(|ui| {
                     dot(ui, pal.ok);
                     ui.label(
-                        RichText::new(
-                            "Hyprland détecté : SUPER + R, fenêtre flottante et centrée.",
-                        )
+                        RichText::new(format!(
+                            "Hyprland détecté : {}, fenêtre flottante et centrée.",
+                            self.sc_label
+                        ))
                         .color(pal.text),
                     );
                 });
@@ -1583,6 +1853,10 @@ impl Setup {
         }
         if apply && let Some(Ok(p)) = &self.shortcut {
             self.applied = Some(hypr::apply(p));
+            if matches!(self.applied, Some(Ok(_))) {
+                let (sc, label) = (self.sc.clone(), self.sc_label.clone());
+                self.remember_shortcut(Some((&sc, &label)));
+            }
         }
     }
 

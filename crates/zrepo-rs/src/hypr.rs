@@ -13,6 +13,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use zrepo_core::shortcut::Shortcut;
+
 /// Une ligne de l'aperçu : retirée, ajoutée, ou repère.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Line {
@@ -49,9 +51,9 @@ fn hypr_dir() -> Option<PathBuf> {
     Some(base.join("hypr"))
 }
 
-/// Ce qu'il faudrait modifier pour lancer `exe` avec SUPER + R et faire
-/// flotter la fenêtre. Ne modifie rien.
-pub fn propose(exe: &Path) -> Result<Proposal, String> {
+/// Ce qu'il faudrait modifier pour lancer `exe` avec la combinaison `sc` et
+/// faire flotter la fenêtre. Ne modifie rien.
+pub fn propose(exe: &Path, sc: &Shortcut) -> Result<Proposal, String> {
     let dir = hypr_dir().ok_or("Dossier de configuration introuvable.")?;
     let exe = exe.to_string_lossy();
     let lua = dir.join("hyprland.lua");
@@ -68,7 +70,7 @@ pub fn propose(exe: &Path) -> Result<Proposal, String> {
         };
         let omarchy = bind_text.contains("o.bind(") || rules_text.contains("default.hypr.omarchy");
         let mut p = Proposal::default();
-        let bind = lua_binding(&bind_text, &exe, omarchy);
+        let bind = lua_binding(&bind_text, &exe, omarchy, sc);
         push(&mut p, &bindings, &bind_text, bind);
         // Même fichier : la règle s'ajoute au texte déjà modifié.
         let base = match p.changes.iter().find(|c| c.file == lua) {
@@ -88,7 +90,7 @@ pub fn propose(exe: &Path) -> Result<Proposal, String> {
             &mut p,
             &bindings,
             &bind_text,
-            conf_binding(&bind_text, &exe),
+            conf_binding(&bind_text, &exe, sc),
         );
         let base = match p.changes.iter().find(|c| c.file == conf) {
             Some(c) => c.new_text.clone(),
@@ -183,52 +185,105 @@ fn lua_quote(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// Les combinaisons essayées, dans l'ordre, si SUPER + R est déjà pris.
-const KEYS: [&str; 3] = ["SUPER + R", "SUPER + ALT + R", "SUPER + CTRL + R"];
+/// Combinaison comparable : modificateurs triés, majuscules, sans espaces.
+/// « SUPER + ALT + R » et « ALT+SUPER+r » donnent la même chose.
+fn norm_keys(mods: &[&str], key: &str) -> String {
+    let mut m: Vec<String> = mods
+        .iter()
+        .map(|s| s.trim().to_ascii_uppercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    m.sort();
+    m.push(key.trim().to_ascii_uppercase());
+    m.join("+")
+}
 
-fn lua_binding(text: &str, exe: &str, omarchy: bool) -> Edit {
+/// « SUPER + ALT + R » (Lua).
+fn norm_lua(s: &str) -> String {
+    let mut parts: Vec<&str> = s.split('+').collect();
+    let key = parts.pop().unwrap_or("");
+    norm_keys(&parts, key)
+}
+
+fn taken(sc: &Shortcut, file: &str) -> Edit {
+    Edit::Nothing(format!(
+        "{} est déjà utilisé dans {file} : choisissez une autre combinaison.",
+        sc.label()
+    ))
+}
+
+fn lua_binding(text: &str, exe: &str, omarchy: bool, sc: &Shortcut) -> Edit {
     let lines: Vec<&str> = text.lines().collect();
+    let want = norm_lua(&sc.hypr_lua());
+    // Ligne `bind` (hors commentaire) dont la combinaison est `want`, sauf `skip`.
+    let used = |skip: Option<usize>| {
+        lines.iter().enumerate().any(|(n, l)| {
+            Some(n) != skip
+                && !is_comment(l, "--")
+                && l.contains("bind")
+                && lua_strings(l)
+                    .first()
+                    .is_some_and(|(_, _, k)| norm_lua(k) == want)
+        })
+    };
     for (n, line) in lines.iter().enumerate() {
         if is_comment(line, "--") || !line.contains("bind") {
             continue;
         }
-        let Some(&(s, e, cmd)) = lua_strings(line).iter().find(|(_, _, c)| launches_zrepo(c))
-        else {
+        let strings = lua_strings(line);
+        let Some(&(s, e, cmd)) = strings.iter().find(|(_, _, c)| launches_zrepo(c)) else {
             continue;
         };
-        if cmd == lua_quote(exe).trim_matches('"') {
-            return Edit::Nothing(format!("Le raccourci lance déjà {exe} (ligne {}).", n + 1));
+        let same_cmd = cmd == lua_quote(exe).trim_matches('"');
+        // La combinaison est la première chaîne de la ligne.
+        let key = strings.first().filter(|&&(ks, _, _)| ks != s);
+        let same_key = key.is_none_or(|(_, _, k)| norm_lua(k) == want);
+        if same_cmd && same_key {
+            return Edit::Nothing(format!(
+                "{} lance déjà {exe} (ligne {}).",
+                sc.label(),
+                n + 1
+            ));
         }
-        let new_line = format!("{}{}{}", &line[..s], lua_quote(exe), &line[e..]);
+        if !same_key && used(Some(n)) {
+            return taken(sc, "la configuration de Hyprland");
+        }
+        // De droite à gauche : la commande d'abord, les positions de la clé restent justes.
+        let mut new_line = format!("{}{}{}", &line[..s], lua_quote(exe), &line[e..]);
+        if let Some(&(ks, ke, _)) = key.filter(|_| !same_key) {
+            new_line = format!(
+                "{}{}{}",
+                &new_line[..ks],
+                lua_quote(&sc.hypr_lua()),
+                &new_line[ke..]
+            );
+        }
+        let what = match (same_key, same_cmd) {
+            (false, false) => "combinaison et commande remplacées",
+            (false, true) => "combinaison remplacée",
+            _ => "commande remplacée",
+        };
         let preview = vec![
-            Line::Note(format!("ligne {} : commande remplacée", n + 1)),
+            Line::Note(format!("ligne {} : {what}", n + 1)),
             Line::Removed(line.to_string()),
             Line::Added(new_line.clone()),
         ];
         return Edit::Change(replace_line(text, n, &new_line), preview);
     }
-    let used = |k: &str| {
-        lines
-            .iter()
-            .any(|l| !is_comment(l, "--") && l.contains("bind") && l.contains(&format!("\"{k}\"")))
-    };
-    let Some(key) = KEYS.iter().find(|k| !used(k)) else {
-        return Edit::Nothing(
-            "SUPER + R, SUPER + ALT + R et SUPER + CTRL + R sont déjà utilisés. \
-             Choisissez manuellement un autre raccourci pour zrepo-rs."
-                .into(),
-        );
-    };
+    if used(None) {
+        return taken(sc, "la configuration de Hyprland");
+    }
+    let key = sc.hypr_lua();
     let bind = if omarchy {
         format!(
             "o.bind({}, \"Projets (zrepo-rs)\", {})",
-            lua_quote(key),
+            lua_quote(&key),
             lua_quote(exe)
         )
     } else {
         format!(
             "hl.bind({}, hl.dsp.exec_cmd({}), {{ description = \"Projets (zrepo-rs)\" }})",
-            lua_quote(key),
+            lua_quote(&key),
             lua_quote(exe)
         )
     };
@@ -270,8 +325,32 @@ fn lua_rules(text: &str) -> Edit {
     Edit::Change(append(text, &LUA_RULES), preview)
 }
 
-fn conf_binding(text: &str, exe: &str) -> Edit {
+/// `bindd = SUPER ALT, R, …` : la combinaison comparable et la position de la
+/// fin du champ de la touche (après sa virgule).
+fn conf_keys(line: &str) -> Option<(String, usize)> {
+    let (head, rest) = line.split_once('=')?;
+    if !head.trim_start().starts_with("bind") {
+        return None;
+    }
+    let mut fields = rest.splitn(3, ',');
+    let mods = fields.next()?;
+    let key = fields.next()?;
+    fields.next()?;
+    let end = head.len() + 1 + mods.len() + 1 + key.len() + 1;
+    let mods: Vec<&str> = mods.split_whitespace().collect();
+    Some((norm_keys(&mods, key), end))
+}
+
+fn conf_binding(text: &str, exe: &str, sc: &Shortcut) -> Edit {
     let lines: Vec<&str> = text.lines().collect();
+    let (mods, key) = sc.hypr_conf();
+    let want = norm_keys(&mods.split_whitespace().collect::<Vec<_>>(), &key);
+    let used = |skip: Option<usize>| {
+        lines
+            .iter()
+            .enumerate()
+            .any(|(n, l)| Some(n) != skip && conf_keys(l).is_some_and(|(k, _)| k == want))
+    };
     for (n, line) in lines.iter().enumerate() {
         let t = line.trim_start();
         if !t.starts_with("bind") || !launches_zrepo(t.split_once('=').map_or("", |x| x.1)) {
@@ -282,37 +361,40 @@ fn conf_binding(text: &str, exe: &str) -> Edit {
             continue;
         };
         let cmd = line[pos + 5..].trim();
-        if cmd == exe {
-            return Edit::Nothing(format!("Le raccourci lance déjà {exe} (ligne {}).", n + 1));
+        let same_cmd = cmd == exe;
+        let current = conf_keys(line);
+        let same_key = current.as_ref().is_none_or(|(k, _)| *k == want);
+        if same_cmd && same_key {
+            return Edit::Nothing(format!(
+                "{} lance déjà {exe} (ligne {}).",
+                sc.label(),
+                n + 1
+            ));
         }
-        let new_line = format!("{}exec, {exe}", &line[..pos]);
+        if !same_key && used(Some(n)) {
+            return taken(sc, "la configuration de Hyprland");
+        }
+        let mut new_line = format!("{}exec, {exe}", &line[..pos]);
+        if let Some((_, end)) = current.filter(|_| !same_key) {
+            let head = &line[..line.find('=').unwrap_or(0)];
+            new_line = format!("{head}= {mods}, {key},{}", &new_line[end..]);
+        }
+        let what = match (same_key, same_cmd) {
+            (false, false) => "combinaison et commande remplacées",
+            (false, true) => "combinaison remplacée",
+            _ => "commande remplacée",
+        };
         let preview = vec![
-            Line::Note(format!("ligne {} : commande remplacée", n + 1)),
+            Line::Note(format!("ligne {} : {what}", n + 1)),
             Line::Removed(line.to_string()),
             Line::Added(new_line.clone()),
         ];
         return Edit::Change(replace_line(text, n, &new_line), preview);
     }
-    let used = |k: &str| {
-        let (m, key) = k.rsplit_once(" + ").unwrap_or(("", k));
-        let mods = m.replace(" + ", " ");
-        let pat = format!("{mods}, {key},");
-        lines
-            .iter()
-            .any(|l| l.trim_start().starts_with("bind") && l.contains(&pat))
-    };
-    let Some(key) = KEYS.iter().find(|k| !used(k)) else {
-        return Edit::Nothing(
-            "SUPER + R, SUPER + ALT + R et SUPER + CTRL + R sont déjà utilisés. \
-             Choisissez manuellement un autre raccourci pour zrepo-rs."
-                .into(),
-        );
-    };
-    let (m, k) = key.rsplit_once(" + ").unwrap_or(("SUPER", "R"));
-    let bind = format!(
-        "bindd = {}, {k}, Projets (zrepo-rs), exec, {exe}",
-        m.replace(" + ", " ")
-    );
+    if used(None) {
+        return taken(sc, "la configuration de Hyprland");
+    }
+    let bind = format!("bindd = {mods}, {key}, Projets (zrepo-rs), exec, {exe}");
     let block = [
         "",
         "# zrepo-rs : lanceur de projets (ajouté par zrepo-rs setup).",
@@ -463,6 +545,10 @@ mod tests {
 o.bind(\"SUPER + R\", \"Projets (zrepo-rs)\", \"omarchy-launch-tui zrepo-rs\")\n\
 hl.unbind(\"F9\")\n";
 
+    fn sc(s: &str) -> Shortcut {
+        Shortcut::parse(s).unwrap()
+    }
+
     fn change(e: Edit) -> (String, Vec<Line>) {
         match e {
             Edit::Change(t, p) => (t, p),
@@ -472,7 +558,12 @@ hl.unbind(\"F9\")\n";
 
     #[test]
     fn omarchy_remplace_la_commande() {
-        let (text, preview) = change(lua_binding(OMARCHY, "/home/u/.local/bin/zrepo-rs", true));
+        let (text, preview) = change(lua_binding(
+            OMARCHY,
+            "/home/u/.local/bin/zrepo-rs",
+            true,
+            &sc("Super+R"),
+        ));
         assert!(text.contains(
             "o.bind(\"SUPER + R\", \"Projets (zrepo-rs)\", \"/home/u/.local/bin/zrepo-rs\")\n"
         ));
@@ -486,14 +577,19 @@ hl.unbind(\"F9\")\n";
         );
         // Deuxième passage : déjà fait.
         assert!(matches!(
-            lua_binding(&text, "/home/u/.local/bin/zrepo-rs", true),
+            lua_binding(&text, "/home/u/.local/bin/zrepo-rs", true, &sc("Super+R")),
             Edit::Nothing(_)
         ));
     }
 
     #[test]
     fn lua_sans_raccourci_existant() {
-        let (text, _) = change(lua_binding("hl.unbind(\"F9\")", "/opt/zrepo-rs", true));
+        let (text, _) = change(lua_binding(
+            "hl.unbind(\"F9\")",
+            "/opt/zrepo-rs",
+            true,
+            &sc("Super+R"),
+        ));
         assert!(
             text.ends_with("o.bind(\"SUPER + R\", \"Projets (zrepo-rs)\", \"/opt/zrepo-rs\")\n")
         );
@@ -501,6 +597,7 @@ hl.unbind(\"F9\")\n";
             "hl.bind(\"SUPER + R\", hl.dsp.exec_cmd(\"rofi\"))\n",
             "/opt/zrepo-rs",
             false,
+            &sc("Alt+Super+R"),
         ));
         assert!(text.contains(
             "hl.bind(\"SUPER + ALT + R\", hl.dsp.exec_cmd(\"/opt/zrepo-rs\"), { description = \"Projets (zrepo-rs)\" })"
@@ -519,7 +616,7 @@ hl.unbind(\"F9\")\n";
     #[test]
     fn ancien_format_conf() {
         let conf = "bindd = SUPER, R, Projets (zrepo-rs), exec, zrepo-rs\n";
-        let (text, _) = change(conf_binding(conf, "/opt/zrepo-rs"));
+        let (text, _) = change(conf_binding(conf, "/opt/zrepo-rs", &sc("Super+R")));
         assert_eq!(
             text,
             "bindd = SUPER, R, Projets (zrepo-rs), exec, /opt/zrepo-rs\n"
@@ -527,6 +624,7 @@ hl.unbind(\"F9\")\n";
         let (text, _) = change(conf_binding(
             "bind = SUPER, R, exec, wofi\n",
             "/opt/zrepo-rs",
+            &sc("Super+Alt+R"),
         ));
         assert!(text.ends_with("bindd = SUPER ALT, R, Projets (zrepo-rs), exec, /opt/zrepo-rs\n"));
         let (text, _) = change(conf_rules("", true));
@@ -554,7 +652,17 @@ hl.unbind(\"F9\")\n";
     #[test]
     fn coexistence_avec_ancien_raccourci_lua() {
         let old_bind = "o.bind(\"SUPER + R\", \"Ancien zrepo\", \"/home/u/.local/bin/zrepo\")\n";
-        let (with_new_bind, _) = change(lua_binding(old_bind, "/opt/zrepo-rs", true));
+        // La même touche que l'ancien zrepo : refusée, l'ancienne ligne reste.
+        assert!(matches!(
+            lua_binding(old_bind, "/opt/zrepo-rs", true, &sc("Super+R")),
+            Edit::Nothing(_)
+        ));
+        let (with_new_bind, _) = change(lua_binding(
+            old_bind,
+            "/opt/zrepo-rs",
+            true,
+            &sc("Super+Alt+R"),
+        ));
         assert!(with_new_bind.contains(old_bind));
         assert!(
             with_new_bind
@@ -570,7 +678,12 @@ hl.unbind(\"F9\")\n";
     #[test]
     fn coexistence_avec_ancien_raccourci_conf() {
         let old_bind = "bindd = SUPER, R, Ancien zrepo, exec, /home/u/.local/bin/zrepo\n";
-        let (with_new_bind, _) = change(conf_binding(old_bind, "/opt/zrepo-rs"));
+        assert!(matches!(
+            conf_binding(old_bind, "/opt/zrepo-rs", &sc("Super+R")),
+            Edit::Nothing(_)
+        ));
+        let (with_new_bind, _) =
+            change(conf_binding(old_bind, "/opt/zrepo-rs", &sc("Super+Alt+R")));
         assert!(with_new_bind.contains(old_bind));
         assert!(
             with_new_bind.contains("bindd = SUPER ALT, R, Projets (zrepo-rs), exec, /opt/zrepo-rs")
@@ -583,25 +696,59 @@ hl.unbind(\"F9\")\n";
     }
 
     #[test]
-    fn lua_ne_duplique_pas_une_touche_si_toutes_sont_occupees() {
+    fn lua_refuse_une_combinaison_occupee() {
         let text = "o.bind(\"SUPER + R\", \"Ancien zrepo\", \"zrepo\")\n\
 o.bind(\"SUPER + ALT + R\", \"Terminal\", \"alacritty\")\n\
 o.bind(\"SUPER + CTRL + R\", \"Menu\", \"wofi\")\n";
-        match lua_binding(text, "/opt/zrepo-rs", true) {
-            Edit::Nothing(note) => assert!(note.contains("Choisissez manuellement")),
+        match lua_binding(text, "/opt/zrepo-rs", true, &sc("Ctrl+Super+R")) {
+            Edit::Nothing(note) => assert!(note.contains("déjà utilisé")),
             Edit::Change(_, _) => panic!("un raccourci occupé ne doit pas être réécrit"),
         }
     }
 
     #[test]
-    fn conf_ne_duplique_pas_une_touche_si_toutes_sont_occupees() {
+    fn conf_refuse_une_combinaison_occupee() {
         let text = "bindd = SUPER, R, Ancien zrepo, exec, zrepo\n\
 bindd = SUPER ALT, R, Terminal, exec, alacritty\n\
 bindd = SUPER CTRL, R, Menu, exec, wofi\n";
-        match conf_binding(text, "/opt/zrepo-rs") {
-            Edit::Nothing(note) => assert!(note.contains("Choisissez manuellement")),
+        match conf_binding(text, "/opt/zrepo-rs", &sc("Super+Ctrl+R")) {
+            Edit::Nothing(note) => assert!(note.contains("déjà utilisé")),
             Edit::Change(_, _) => panic!("un raccourci occupé ne doit pas être réécrit"),
         }
+    }
+
+    #[test]
+    fn changement_de_combinaison() {
+        let (text, preview) = change(lua_binding(
+            OMARCHY,
+            "omarchy-launch-tui zrepo-rs",
+            true,
+            &sc("Super+Shift+Space"),
+        ));
+        assert!(text.contains(
+            "o.bind(\"SUPER + SHIFT + SPACE\", \"Projets (zrepo-rs)\", \"omarchy-launch-tui zrepo-rs\")\n"
+        ));
+        assert_eq!(
+            preview[0],
+            Line::Note("ligne 3 : combinaison remplacée".into())
+        );
+        // L'ordre des modificateurs ne compte pas.
+        assert!(matches!(
+            lua_binding(
+                &text,
+                "omarchy-launch-tui zrepo-rs",
+                true,
+                &sc("Shift+Super+Space")
+            ),
+            Edit::Nothing(_)
+        ));
+
+        let conf = "bindd = SUPER, R, Projets (zrepo-rs), exec, zrepo-rs\n";
+        let (text, _) = change(conf_binding(conf, "/opt/zrepo-rs", &sc("Ctrl+Alt+P")));
+        assert_eq!(
+            text,
+            "bindd = CTRL ALT, P, Projets (zrepo-rs), exec, /opt/zrepo-rs\n"
+        );
     }
 
     #[test]
@@ -610,7 +757,8 @@ bindd = SUPER CTRL, R, Menu, exec, wofi\n";
         fs::create_dir_all(&dir).unwrap();
         let f = dir.join("bindings.lua");
         fs::write(&f, OMARCHY).unwrap();
-        let (new_text, preview) = change(lua_binding(OMARCHY, "/opt/zrepo-rs", true));
+        let (new_text, preview) =
+            change(lua_binding(OMARCHY, "/opt/zrepo-rs", true, &sc("Super+R")));
         let p = Proposal {
             changes: vec![Change {
                 file: f.clone(),

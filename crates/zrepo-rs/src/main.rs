@@ -8,6 +8,7 @@
 // texte se rattachent à celle du terminal parent (`attach_console`).
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod agent;
 mod cli;
 mod detect;
 mod gui;
@@ -54,6 +55,7 @@ fn run(cmd: cli::Command) -> i32 {
             attach_console();
             cli::update(install)
         }
+        Command::Agent { keys, open } => return agent::run(&keys, std::path::Path::new(&open)),
         Command::Help => {
             attach_console();
             println!("{}", cli::USAGE);
