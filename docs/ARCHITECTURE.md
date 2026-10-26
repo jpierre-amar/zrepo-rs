@@ -108,6 +108,7 @@ pub mod auth {
     pub enum Poll { Pending, SlowDown, Done(String) }
     pub fn device_poll(client_id: &str, dc: &DeviceCode) -> Res<Poll>;   // un seul appel, non bloquant au-delà de la requête
     pub fn gh_cli_token() -> Option<String>;
+    pub fn keyring_pending() -> bool;   // accès au trousseau en cours (macOS : peut afficher une demande de mot de passe)
 }
 pub mod sources {   // chaque source est indépendante, appelable depuis un thread
     pub fn locals(cfg: &Config) -> Vec<Entry>;
@@ -132,6 +133,13 @@ pub mod apps {   // terminal et éditeurs
     pub fn terminal(cfg: &Config) -> Option<App>;
     pub fn launch(app: &App, dir: &str, progress: &dyn Fn(&str)) -> Res<()>;
 }
+pub mod path {   // PATH du processus
+    pub fn merge_paths(current: &OsStr, extra: impl IntoIterator<Item = PathBuf>) -> Option<(OsString, Vec<PathBuf>)>;
+    #[cfg(target_os = "macos")]
+    pub fn completed() -> Option<(OsString, Vec<PathBuf>)>;   // PATH du shell de connexion + dossiers usuels ; None si rien ne manque
+    pub fn note_added(added: Vec<PathBuf>);                   // appelé par main après set_var
+    pub fn added() -> Option<&'static [PathBuf]>;             // pour doctor
+}
 pub mod doctor { pub struct Check { pub ok: bool, pub label: String, pub detail: String }  pub fn run(cfg: &Config) -> Vec<Check>; }
 ```
 
@@ -145,6 +153,7 @@ pub mod doctor { pub struct Check { pub ok: bool, pub label: String, pub detail:
 | Terminal | `$TERMINAL`, puis ghostty, kitty, alacritty, foot, wezterm, gnome-terminal, konsole, xfce4-terminal, x-terminal-emulator, xterm | `open -a Terminal <chemin>` | `wt -d <chemin>`, sinon `pwsh`/`powershell -NoExit` dans une nouvelle console |
 | Éditeurs connus | PATH | PATH, sinon `open -a <App>` si `/Applications/<App>.app` existe | PATH, sinon dossiers d'installation (`%LOCALAPPDATA%\Programs\…`) |
 | `/proc` | oui | non | non |
+| PATH au démarrage | inchangé | complété si lancé hors terminal (shell de connexion, délai 2 s, puis `~/.local/bin`, `~/.cargo/bin`, `/opt/homebrew/bin`, `/usr/local/bin`) | inchangé |
 | Scan distant | `ssh` | `ssh` | `ssh.exe` (OpenSSH Windows) |
 
 Aucun appel aux commandes `omarchy-*` n'est obligatoire. On les utilise si elles existent.
@@ -198,7 +207,8 @@ Sous Windows, le binaire est `windows_subsystem = "windows"`. On rattache la con
   Cibles : `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`.
 - `install.sh` : détecte l'OS et l'architecture, télécharge la dernière release (ou `ZREPO_RS_VERSION`), vérifie le sha256,
   et installe dans `~/.local/bin` (ou le dossier `ZREPO_RS_INSTALL_DIR`). Sous Linux il installe le `.desktop` et l'icône,
-  sous macOS il crée `~/Applications/zrepo-rs.app` (un bundle minimal). Il lance ensuite `zrepo-rs setup`.
+  sous macOS il crée `~/Applications/zrepo-rs.app` (un bundle minimal signé ad hoc) et fait de `~/.local/bin/zrepo-rs`
+  un lien symbolique vers son binaire, pour que le trousseau ne voie qu'une application. Il lance ensuite `zrepo-rs setup`.
 - `install.ps1` : installe dans `%LOCALAPPDATA%\Programs\zrepo-rs`, ajoute ce dossier au PATH utilisateur,
   crée un raccourci dans le menu Démarrer, puis lance `zrepo-rs setup`.
 - Les deux installeurs demandent le dossier d'installation (avec le défaut ci-dessus), sauf avec `-y` ou `--yes`.

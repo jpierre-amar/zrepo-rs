@@ -2,6 +2,8 @@
 //! jeton personnel colle, ou jeton de gh. Le jeton vit dans le trousseau du
 //! systeme, jamais dans config.toml.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -56,7 +58,33 @@ fn keyring_entry() -> keyring::Result<keyring::Entry> {
     keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
 }
 
+/// Acces au trousseau en cours. Sous macOS, l'acces peut ouvrir la fenetre
+/// de mot de passe du systeme : le lanceur ne doit pas se fermer pendant ce
+/// temps, alors qu'il perd le focus.
+static KEYRING_PENDING: AtomicUsize = AtomicUsize::new(0);
+
+pub fn keyring_pending() -> bool {
+    KEYRING_PENDING.load(Ordering::SeqCst) > 0
+}
+
+/// Compte un acces au trousseau tant qu'il est en vie, meme en cas de panique.
+struct KeyringAccess;
+
+impl KeyringAccess {
+    fn start() -> Self {
+        KEYRING_PENDING.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for KeyringAccess {
+    fn drop(&mut self) {
+        KEYRING_PENDING.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 fn keyring_token() -> Option<String> {
+    let _access = KeyringAccess::start();
     keyring_entry()
         .and_then(|e| e.get_password())
         .ok()
@@ -81,6 +109,7 @@ pub fn store_token(t: &str) -> Res<()> {
         return Err(Fail::new(EX_AUTH, "Jeton GitHub vide."));
     }
     forget_github_cache();
+    let _access = KeyringAccess::start();
     keyring_entry()
         .and_then(|e| e.set_password(t))
         .map_err(|e| {
@@ -105,6 +134,7 @@ fn forget_github_cache() {
 /// Supprimer un jeton absent n'est pas une erreur.
 pub fn delete_token() -> Res<()> {
     forget_github_cache();
+    let _access = KeyringAccess::start();
     match keyring_entry().and_then(|e| e.delete_credential()) {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(Fail::new(
@@ -262,6 +292,17 @@ fn poll_result(v: &Value) -> Res<Poll> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn acces_au_trousseau_compte_tant_qu_il_dure() {
+        let before = KEYRING_PENDING.load(Ordering::SeqCst);
+        {
+            let _a = KeyringAccess::start();
+            assert!(keyring_pending());
+            assert_eq!(KEYRING_PENDING.load(Ordering::SeqCst), before + 1);
+        }
+        assert_eq!(KEYRING_PENDING.load(Ordering::SeqCst), before);
+    }
 
     #[test]
     fn client_oauth_absent_ou_vide_desactive_le_device_flow() {

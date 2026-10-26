@@ -18,6 +18,7 @@ use std::process::ExitCode;
 use zrepo_core::error::{EX_FAIL, EX_OK};
 
 fn main() -> ExitCode {
+    complete_path();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match cli::parse(&args) {
         Ok(cmd) => run(cmd),
@@ -74,6 +75,25 @@ fn run(cmd: cli::Command) -> i32 {
         }
     }
 }
+
+/// macOS : une app ouverte depuis le Finder, le Dock ou Spotlight n'a qu'un
+/// PATH minimal ; on le complète avant toute détection (herdr, codex, éditeurs).
+/// Les processus enfants en héritent.
+#[cfg(target_os = "macos")]
+fn complete_path() {
+    let added = match zrepo_core::path::completed() {
+        Some((path, added)) => {
+            // SAFETY: tout début de main, avant le moindre thread.
+            unsafe { std::env::set_var("PATH", path) };
+            added
+        }
+        None => Vec::new(),
+    };
+    zrepo_core::path::note_added(added);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn complete_path() {}
 
 /// Sous Windows, un binaire « windows » n'a pas de console : on emprunte celle
 /// du terminal qui l'a lancé, sauf si la sortie est déjà redirigée (fichier,

@@ -257,6 +257,12 @@ impl App {
         if focused == Some(true) {
             self.ever_focused = true;
         }
+        // macOS peut demander le mot de passe du trousseau : sa fenêtre prend le
+        // focus. Pendant l'accès, et ensuite tant que le lanceur n'a pas repris
+        // le focus, on ne ferme pas.
+        if cfg!(target_os = "macos") && zrepo_core::auth::keyring_pending() {
+            self.ever_focused = false;
+        }
         let grace = self.started.elapsed() < FOCUS_GRACE;
         if focused == Some(false) && self.ever_focused && !grace && !l.busy() && !self.keep_open {
             self.close(&ctx, EX_CANCEL);

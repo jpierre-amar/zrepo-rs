@@ -10,6 +10,7 @@ pub mod doctor;
 pub mod entry;
 pub mod error;
 pub mod open;
+pub mod path;
 pub mod sources;
 pub mod update;
 

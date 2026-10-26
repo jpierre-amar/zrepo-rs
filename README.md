@@ -77,11 +77,25 @@ L'installeur :
 3. demande le dossier d'installation (`~/.local/bin` par défaut) ;
 4. sous Linux, ajoute `zrepo-rs` au menu des applications (`~/.local/share/applications/zrepo-rs.desktop`
    et l'icône dans `~/.local/share/icons/hicolor/256x256/apps/`) ;
-5. sous macOS, crée `~/Applications/zrepo-rs.app` et retire l'attribut de quarantaine
-   (`xattr -dr com.apple.quarantine`), car le binaire n'est pas notarisé ;
+5. sous macOS, crée `~/Applications/zrepo-rs.app`, retire l'attribut de quarantaine
+   (`xattr -dr com.apple.quarantine`, car le binaire n'est pas notarisé) et signe le
+   bundle (signature ad hoc). `~/.local/bin/zrepo-rs` est alors un **lien symbolique** vers
+   `~/Applications/zrepo-rs.app/Contents/MacOS/zrepo-rs` : le terminal et l'app lancent le
+   même binaire signé. Le jeton GitHub enregistré par `zrepo-rs setup` reste donc lisible
+   depuis le Finder, sans nouvelle demande du trousseau ;
 6. signale si le dossier n'est pas dans le `PATH` et propose d'ajouter la ligne à votre
    fichier de shell (seulement si vous répondez « o ») ;
 7. lance l'assistant `zrepo-rs setup`.
+
+Sous macOS, une app ouverte depuis le Finder, le Dock ou Spotlight ne reçoit qu'un `PATH`
+minimal (`/usr/bin:/bin:/usr/sbin:/sbin`). Au démarrage, zrepo-rs le complète avec celui de
+votre shell de connexion, puis avec `~/.local/bin`, `~/.cargo/bin`, `/opt/homebrew/bin` et
+`/usr/local/bin`. Herdr, codex et les éditeurs sont ainsi trouvés comme dans un terminal.
+`zrepo-rs doctor` indique si le `PATH` a été complété.
+
+Si vous mettez à jour une installation antérieure à ce changement, macOS peut demander une
+dernière fois l'accès au trousseau : répondez « Toujours autoriser ». Chaque nouvelle version
+est signée ad hoc ; après une mise à jour, macOS peut donc reposer la question une fois.
 
 Il n'utilise jamais `sudo`. Options, à passer après `sh -s --` :
 
@@ -340,7 +354,7 @@ rm -rf ~/.config/zrepo-rs ~/.cache/zrepo-rs          # configuration et cache (f
 macOS :
 
 ```sh
-rm -f ~/.local/bin/zrepo-rs
+rm -f ~/.local/bin/zrepo-rs                 # lien vers le binaire de l'app
 rm -rf ~/Applications/zrepo-rs.app
 rm -rf ~/Library/Application\ Support/zrepo-rs ~/Library/Caches/zrepo-rs   # facultatif
 ```

@@ -213,6 +213,13 @@ case "$INSTALL_DIR" in
 esac
 INSTALL_DIR="${INSTALL_DIR%/}"
 [ -n "$INSTALL_DIR" ] || INSTALL_DIR="/"
+# macOS : une mise à jour lancée depuis l'app vise le dossier du bundle, que
+# l'installation recrée. Le lien du binaire va alors dans le dossier par défaut.
+if [ "$OS" = Darwin ]; then
+    case "$INSTALL_DIR" in
+        *.app/Contents/MacOS) INSTALL_DIR="$DEFAULT_DIR" ;;
+    esac
+fi
 
 mkdir -p "$INSTALL_DIR" 2>/dev/null || die "impossible de créer $INSTALL_DIR (droits ?). Choisissez un dossier à vous, sans sudo."
 [ -w "$INSTALL_DIR" ] || die "$INSTALL_DIR n'est pas accessible en écriture. Choisissez un dossier à vous, sans sudo."
@@ -256,14 +263,21 @@ SRC=$(find "$TMP/x" -type f -name zrepo-rs | head -n 1)
 
 # ---------------------------------------------------------------- installation --
 
-step "Installation dans $INSTALL_DIR"
-# Copie puis renommage : remplace proprement un binaire en cours d'exécution.
-cp "$SRC" "$BIN.tmp.$$"
-chmod 755 "$BIN.tmp.$$"
-mv -f "$BIN.tmp.$$" "$BIN"
-ok "$BIN"
+if [ "$OS" = Darwin ]; then
+    # macOS : le binaire vit dans le bundle et $BIN devient un lien vers lui
+    # (install_macos_app). Le trousseau ne voit ainsi qu'une seule application.
+    VERSION_BIN="$SRC"
+else
+    step "Installation dans $INSTALL_DIR"
+    # Copie puis renommage : remplace proprement un binaire en cours d'exécution.
+    cp "$SRC" "$BIN.tmp.$$"
+    chmod 755 "$BIN.tmp.$$"
+    mv -f "$BIN.tmp.$$" "$BIN"
+    ok "$BIN"
+    VERSION_BIN="$BIN"
+fi
 
-INSTALLED_VERSION=$("$BIN" --version 2>/dev/null | awk 'NR==1{print $NF}' | sed 's/^v//') || INSTALLED_VERSION=''
+INSTALLED_VERSION=$("$VERSION_BIN" --version 2>/dev/null | awk 'NR==1{print $NF}' | sed 's/^v//') || INSTALLED_VERSION=''
 case "$INSTALLED_VERSION" in
     [0-9]*.[0-9]*) ;;
     *) INSTALLED_VERSION="${VERSION#v}"; [ -n "$INSTALLED_VERSION" ] || INSTALLED_VERSION="0.0.0" ;;
@@ -356,9 +370,10 @@ install_macos_app() {
     app="$HOME/Applications/zrepo-rs.app"
     step "Création de $app"
     rm -rf "$app"
+    app_bin="$app/Contents/MacOS/zrepo-rs"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-    cp "$BIN" "$app/Contents/MacOS/zrepo-rs"
-    chmod 755 "$app/Contents/MacOS/zrepo-rs"
+    cp "$SRC" "$app_bin"
+    chmod 755 "$app_bin"
 
     if ! fetch_pkg Info.plist.in "$TMP/Info.plist.in"; then
         cat >"$TMP/Info.plist.in" <<'EOF'
@@ -398,13 +413,21 @@ EOF
     if need xattr; then
         info "Retrait de l'attribut de quarantaine (xattr -dr com.apple.quarantine) : le binaire n'est pas notarisé."
         xattr -dr com.apple.quarantine "$app" 2>/dev/null || true
-        xattr -d com.apple.quarantine "$BIN" 2>/dev/null || true
     fi
     # Signature ad hoc du bundle (exigée sur Apple Silicon, sans compte développeur).
     if need codesign; then
         codesign --force --sign - "$app" >/dev/null 2>&1 || warn "signature ad hoc du bundle impossible"
     fi
     ok "$app"
+
+    # Après la signature : le lien et l'app lancent le même binaire signé, donc
+    # le jeton enregistré par « zrepo-rs setup » reste lisible depuis le Finder
+    # sans nouvelle demande du trousseau. Lien temporaire puis renommage : un
+    # ancien binaire (installé par une version précédente) est remplacé d'un coup.
+    step "Installation dans $INSTALL_DIR"
+    ln -s "$app_bin" "$BIN.tmp.$$"
+    mv -f "$BIN.tmp.$$" "$BIN"
+    ok "$BIN → $app_bin"
     info "Pour l'ouvrir au clavier, voir le README (app Raccourcis)."
 }
 

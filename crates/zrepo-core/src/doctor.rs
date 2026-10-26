@@ -116,8 +116,38 @@ fn herdr(cfg: &Config, out: &mut Vec<Check>) {
     });
 }
 
+/// macOS : PATH complété au démarrage (app lancée hors d'un terminal).
+#[cfg(target_os = "macos")]
+fn path_check() -> Check {
+    match crate::path::added() {
+        Some(added) if !added.is_empty() => {
+            let mut dirs: Vec<String> = added
+                .iter()
+                .take(4)
+                .map(|p| p.display().to_string())
+                .collect();
+            if added.len() > dirs.len() {
+                dirs.push("…".into());
+            }
+            check(
+                true,
+                "PATH",
+                format!(
+                    "complété au démarrage, {} dossiers ajoutés : {}",
+                    added.len(),
+                    dirs.join(", ")
+                ),
+            )
+        }
+        _ => check(true, "PATH", "complet (rien à ajouter au démarrage)"),
+    }
+}
+
 pub fn run(cfg: &Config) -> Vec<Check> {
     let mut out = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    out.push(path_check());
 
     out.push(match sys::which("git") {
         Some(p) => match sys::git_version() {

@@ -223,6 +223,49 @@ fn agent_name(h: &Herdr, raw: &str) -> String {
     cand
 }
 
+/// Code d'une erreur JSON de Herdr (`{"error":{"code":...}}`), sur stdout ou stderr.
+fn error_code(out: &str, err: &str) -> Option<String> {
+    [out, err].into_iter().find_map(|s| {
+        let v: Value = serde_json::from_str(s.trim()).ok()?;
+        text(&v["error"]["code"])
+    })
+}
+
+/// Regle de detection qui bloque l'agent, d'apres `herdr agent explain --json`.
+fn blocking_rule(explain: &Value) -> Option<String> {
+    text(&explain["matched_rule"]["id"])
+}
+
+fn not_ready_text(kind: &str, rule: Option<&str>, pane: &str, label: &str) -> String {
+    match rule {
+        Some("trust_directory") => {
+            format!("Codex demande de faire confiance à ce dossier : répondez dans le pane {pane}.")
+        }
+        Some(r) => format!(
+            "{kind} attend une réponse au démarrage (règle Herdr « {r} ») : \
+             répondez dans le pane {pane}.\nS'il ne démarre pas, lancez-le à la main : {label}"
+        ),
+        None => format!(
+            "{kind} attend une réponse au démarrage : regardez le pane {pane}.\n\
+             S'il ne démarre pas, lancez-le à la main : {label}"
+        ),
+    }
+}
+
+/// L'agent attend une confirmation (« Trust this folder? »...) : on montre le
+/// pane a l'utilisateur et on lui laisse la reponse. Rien n'est envoye au pane.
+fn not_ready(h: &Herdr, cfg: &Config, agent: &str, pane: &str) -> String {
+    let rule = [agent, pane].into_iter().find_map(|t| {
+        h.json(&["agent", "explain", t, "--json"])
+            .as_ref()
+            .and_then(blocking_rule)
+    });
+    if !h.run(&["agent", "focus", agent]).0 {
+        let _ = h.run(&["agent", "focus", pane]);
+    }
+    not_ready_text(&cfg.herdr.agent, rule.as_deref(), pane, &cfg.agent_label())
+}
+
 pub fn open(cfg: &Config, target: &str, progress: &dyn Fn(&str)) -> Res<()> {
     if !sys::has("herdr") {
         return Err(Fail::new(EX_DEPS, "herdr introuvable dans le PATH."));
@@ -306,6 +349,9 @@ pub fn open(cfg: &Config, target: &str, progress: &dyn Fn(&str)) -> Res<()> {
     ];
     args.extend(cfg.herdr.args.iter().map(String::as_str));
     let (ok, out, err) = h.run(&args);
+    if !ok && error_code(&out, &err).as_deref() == Some("agent_not_ready") {
+        return Err(Fail::new(EX_HERDR, not_ready(&h, cfg, &agent, &pane)));
+    }
     if !ok {
         return Err(Fail::new(
             EX_HERDR,
@@ -326,4 +372,45 @@ pub fn open(cfg: &Config, target: &str, progress: &dyn Fn(&str)) -> Res<()> {
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn erreur_agent_not_ready_reconnue() {
+        let e =
+            r#"{"error":{"code":"agent_not_ready","message":"agent x is blocked during startup"}}"#;
+        assert_eq!(error_code("", e).as_deref(), Some("agent_not_ready"));
+        assert_eq!(
+            error_code(&format!("{e}\n"), "").as_deref(),
+            Some("agent_not_ready")
+        );
+        assert_eq!(error_code("pas du json", "boom"), None);
+        assert_eq!(error_code(r#"{"result":{}}"#, ""), None);
+    }
+
+    #[test]
+    fn regle_bloquante_et_message() {
+        let v: Value = serde_json::from_str(
+            r#"{"agent":"codex","state":"blocked","matched_rule":{"id":"trust_directory","state":"blocked"}}"#,
+        )
+        .unwrap();
+        let rule = blocking_rule(&v);
+        assert_eq!(rule.as_deref(), Some("trust_directory"));
+        assert_eq!(
+            not_ready_text("codex", rule.as_deref(), "w3:p1", "codex --yolo"),
+            "Codex demande de faire confiance à ce dossier : répondez dans le pane w3:p1."
+        );
+        assert_eq!(
+            blocking_rule(&serde_json::json!({"state": "blocked"})),
+            None
+        );
+
+        let other = not_ready_text("codex", Some("startup_update"), "w3:p1", "codex --yolo");
+        assert!(other.contains("startup_update") && other.contains("w3:p1"));
+        let unknown = not_ready_text("codex", None, "w3:p1", "codex --yolo");
+        assert!(unknown.contains("w3:p1") && !unknown.contains('{'));
+    }
 }
