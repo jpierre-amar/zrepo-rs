@@ -79,7 +79,7 @@ L'installeur :
    et l'icône dans `~/.local/share/icons/hicolor/256x256/apps/`) ;
 5. sous macOS, crée `~/Applications/zrepo-rs.app`, retire l'attribut de quarantaine
    (`xattr -dr com.apple.quarantine`, car le binaire n'est pas notarisé) et signe le
-   bundle (signature ad hoc). `~/.local/bin/zrepo-rs` est alors un **lien symbolique** vers
+   bundle avec un certificat local, créé à la première installation (voir plus bas). `~/.local/bin/zrepo-rs` est alors un **lien symbolique** vers
    `~/Applications/zrepo-rs.app/Contents/MacOS/zrepo-rs` : le terminal et l'app lancent le
    même binaire signé. Le jeton GitHub enregistré par `zrepo-rs setup` reste donc lisible
    depuis le Finder, sans nouvelle demande du trousseau ;
@@ -93,9 +93,18 @@ votre shell de connexion, puis avec `~/.local/bin`, `~/.cargo/bin`, `/opt/homebr
 `/usr/local/bin`. Herdr, codex et les éditeurs sont ainsi trouvés comme dans un terminal.
 `zrepo-rs doctor` indique si le `PATH` a été complété.
 
-Si vous mettez à jour une installation antérieure à ce changement, macOS peut demander une
-dernière fois l'accès au trousseau : répondez « Toujours autoriser ». Chaque nouvelle version
-est signée ad hoc ; après une mise à jour, macOS peut donc reposer la question une fois.
+**Signature et autorisations.** Le binaire n'est pas signé par un compte développeur Apple.
+Signée « ad hoc », chaque version serait une nouvelle application pour macOS, qui redemanderait
+à chaque mise à jour l'accès au dossier Documents, au trousseau, etc. Lors d'une installation
+sans `--yes`, l'installeur crée donc une fois, sur votre Mac, un certificat de signature
+« zrepo-rs signature locale » (trousseau de session ; macOS demande votre mot de passe pour
+l'approuver). Toutes les versions suivantes, y compris les mises à jour faites depuis l'app,
+sont signées avec : vos autorisations sont conservées. Sans ce certificat (refus, `--yes` dès
+la première installation), la signature reste ad hoc. Pour le retirer :
+`security delete-identity -c "zrepo-rs signature locale"`.
+
+Après le passage à ce certificat, macOS demande une dernière fois les autorisations et l'accès
+au trousseau : répondez « Autoriser » ou « Toujours autoriser ».
 
 Il n'utilise jamais `sudo`. Options, à passer après `sh -s --` :
 

@@ -295,6 +295,19 @@ mod imp {
             let _ = launchctl(&["bootout", &format!("{domain}/{LABEL}")]);
         }
 
+        /// Empreinte du certificat « zrepo-rs signature locale » créé par install.sh.
+        fn local_identity() -> Option<String> {
+            let out = Command::new("/usr/bin/security")
+                .args(["find-identity", "-v", "-p", "codesigning"])
+                .output()
+                .ok()?;
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .find(|l| l.contains("\"zrepo-rs signature locale\""))
+                .and_then(|l| l.split_whitespace().nth(1))
+                .map(str::to_string)
+        }
+
         fn info_plist() -> String {
             format!(
                 "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
@@ -332,9 +345,11 @@ mod imp {
             fs::copy(&exe, &bin).map_err(|e| io("Copie de l'agent", e))?;
             fs::write(app.join("Contents/Info.plist"), info_plist())
                 .map_err(|e| io("Info.plist de l'agent", e))?;
-            // Signature ad hoc, exigée sur Apple Silicon pour un bundle modifié.
+            // Le certificat local d'install.sh s'il existe, sinon ad hoc
+            // (une signature est exigée sur Apple Silicon).
+            let identity = local_identity().unwrap_or_else(|| "-".into());
             let _ = Command::new("/usr/bin/codesign")
-                .args(["--force", "--sign", "-"])
+                .args(["--force", "--sign", &identity])
                 .arg(&app)
                 .output();
 

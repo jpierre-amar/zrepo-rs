@@ -222,7 +222,9 @@ Sous Windows, le binaire est `windows_subsystem = "windows"`. On rattache la con
   Cibles : `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`.
 - `install.sh` : détecte l'OS et l'architecture, télécharge la dernière release (ou `ZREPO_RS_VERSION`), vérifie le sha256,
   et installe dans `~/.local/bin` (ou le dossier `ZREPO_RS_INSTALL_DIR`). Sous Linux il installe le `.desktop` et l'icône,
-  sous macOS il crée `~/Applications/zrepo-rs.app` (un bundle minimal signé ad hoc) et fait de `~/.local/bin/zrepo-rs`
+  sous macOS il crée `~/Applications/zrepo-rs.app` (un bundle minimal signé avec le certificat local
+  « zrepo-rs signature locale », créé une fois hors `--yes`, sinon ad hoc : une identité stable garde
+  les autorisations TCC et l'accès au trousseau d'une version à l'autre) et fait de `~/.local/bin/zrepo-rs`
   un lien symbolique vers son binaire, pour que le trousseau ne voie qu'une application. Il lance ensuite `zrepo-rs setup`.
 - `install.ps1` : installe dans `%LOCALAPPDATA%\Programs\zrepo-rs`, ajoute ce dossier au PATH utilisateur,
   crée un raccourci dans le menu Démarrer, puis lance `zrepo-rs setup`.

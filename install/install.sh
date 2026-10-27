@@ -366,6 +366,81 @@ EOF
     fi
 }
 
+# ------------------------------------------------- signature macOS (locale) --
+#
+# Signée « ad hoc », chaque version est une nouvelle application pour macOS :
+# les autorisations (dossier Documents...) et l'accès au trousseau seraient
+# redemandés à chaque mise à jour. Un certificat créé une fois sur ce Mac donne
+# la même identité à toutes les versions. Il n'est créé que sans --yes (macOS
+# demande alors le mot de passe dans une fenêtre) ; ensuite, toute installation
+# le réutilise, --yes compris. Sans lui : signature ad hoc, comme avant.
+
+SIGN_CN="zrepo-rs signature locale"
+LOGIN_KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
+
+# Empreinte SHA-1 du certificat valide, s'il existe.
+find_sign_id() {
+    security find-identity -v -p codesigning 2>/dev/null \
+        | awk -v cn="\"$SIGN_CN\"" 'index($0, cn) { print $2; exit }'
+}
+
+create_sign_id() {
+    ssl=/usr/bin/openssl
+    if [ ! -x "$ssl" ] || [ ! -f "$LOGIN_KEYCHAIN" ] || ! need security; then
+        return 1
+    fi
+    d="$TMP/signature"
+    mkdir -p "$d"
+    cat >"$d/req.cnf" <<EOF_CNF
+[req]
+distinguished_name = dn
+prompt = no
+x509_extensions = v3
+[dn]
+CN = $SIGN_CN
+[v3]
+basicConstraints = critical, CA:false
+keyUsage = critical, digitalSignature
+extendedKeyUsage = critical, codeSigning
+EOF_CNF
+    "$ssl" req -x509 -newkey rsa:2048 -nodes -days 3650 -config "$d/req.cnf" \
+        -keyout "$d/key.pem" -out "$d/cert.pem" >/dev/null 2>&1 || return 1
+    pass=$(od -An -tx1 -N16 /dev/urandom | tr -d ' \n')
+    "$ssl" pkcs12 -export -inkey "$d/key.pem" -in "$d/cert.pem" -name "$SIGN_CN" \
+        -out "$d/id.p12" -passout "pass:$pass" >/dev/null 2>&1 || return 1
+    rm -f "$d/key.pem"
+    # -T : codesign peut utiliser la clé ; aucune autre application.
+    security import "$d/id.p12" -k "$LOGIN_KEYCHAIN" -P "$pass" -T /usr/bin/codesign >/dev/null 2>&1 || return 1
+    info "macOS va demander votre mot de passe pour approuver ce certificat (une seule fois)."
+    if ! security add-trusted-cert -r trustRoot -p codeSign -k "$LOGIN_KEYCHAIN" "$d/cert.pem" >/dev/null 2>&1; then
+        security delete-identity -c "$SIGN_CN" "$LOGIN_KEYCHAIN" >/dev/null 2>&1 || true
+        return 1
+    fi
+}
+
+sign_macos_app() {
+    need codesign || return 0
+    sign_id=''
+    if need security; then
+        sign_id=$(find_sign_id)
+        if [ -z "$sign_id" ] && [ "$ASSUME_YES" -eq 0 ]; then
+            step "Certificat de signature local"
+            info "Pour que macOS garde vos autorisations (dossiers, trousseau) d'une version à l'autre."
+            if create_sign_id; then
+                sign_id=$(find_sign_id)
+            else
+                warn "certificat non créé : signature ad hoc (autorisations redemandées après chaque mise à jour)"
+            fi
+        fi
+    fi
+    if [ -n "$sign_id" ] && codesign --force --sign "$sign_id" "$1" >/dev/null 2>&1; then
+        ok "signé avec le certificat « $SIGN_CN »"
+        return 0
+    fi
+    # Signature ad hoc (exigée sur Apple Silicon, sans compte développeur).
+    codesign --force --sign - "$1" >/dev/null 2>&1 || warn "signature ad hoc du bundle impossible"
+}
+
 install_macos_app() {
     app="$HOME/Applications/zrepo-rs.app"
     step "Création de $app"
@@ -414,10 +489,7 @@ EOF
         info "Retrait de l'attribut de quarantaine (xattr -dr com.apple.quarantine) : le binaire n'est pas notarisé."
         xattr -dr com.apple.quarantine "$app" 2>/dev/null || true
     fi
-    # Signature ad hoc du bundle (exigée sur Apple Silicon, sans compte développeur).
-    if need codesign; then
-        codesign --force --sign - "$app" >/dev/null 2>&1 || warn "signature ad hoc du bundle impossible"
-    fi
+    sign_macos_app "$app"
     ok "$app"
 
     # Après la signature : le lien et l'app lancent le même binaire signé, donc
@@ -428,7 +500,7 @@ EOF
     ln -s "$app_bin" "$BIN.tmp.$$"
     mv -f "$BIN.tmp.$$" "$BIN"
     ok "$BIN → $app_bin"
-    info "Pour l'ouvrir au clavier, voir le README (app Raccourcis)."
+    info "Raccourci clavier : réglages de zrepo-rs (Ctrl-,), étape « Raccourci »."
 }
 
 case "$OS" in
