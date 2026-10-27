@@ -89,6 +89,21 @@ pub struct RemoteConfig {
     pub ssh_timeout: u64, // secondes, par hote
 }
 
+/// Agents proposés dans l'assistant : (type Herdr, nom affiché, option qui
+/// autorise toutes les actions sans confirmation).
+pub const AGENTS: [(&str, &str, &str); 2] = [
+    ("codex", "Codex", "--yolo"),
+    ("claude", "Claude", "--dangerously-skip-permissions"),
+];
+
+fn bypass_flag(agent: &str) -> Option<&'static str> {
+    AGENTS.iter().find(|a| a.0 == agent).map(|a| a.2)
+}
+
+fn is_bypass_flag(arg: &str) -> bool {
+    AGENTS.iter().any(|a| a.2 == arg)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HerdrConfig {
@@ -306,6 +321,34 @@ impl Config {
         }
     }
 
+    /// Nom affiché de l'agent : « Codex », « Claude », ou le type tel quel.
+    pub fn agent_name(&self) -> String {
+        AGENTS
+            .iter()
+            .find(|a| a.0 == self.herdr.agent)
+            .map_or_else(|| self.herdr.agent.clone(), |a| a.1.to_string())
+    }
+
+    /// L'agent démarre-t-il sans demander de confirmation (--yolo...) ?
+    pub fn agent_bypass(&self) -> bool {
+        self.herdr.args.iter().any(|a| is_bypass_flag(a))
+    }
+
+    /// Change d'agent : l'option sans confirmation suit (celle du nouvel
+    /// agent remplace celle de l'ancien), les autres arguments restent.
+    pub fn set_agent(&mut self, agent: &str) {
+        let bypass = self.agent_bypass();
+        self.herdr.agent = agent.to_string();
+        self.set_agent_bypass(bypass);
+    }
+
+    pub fn set_agent_bypass(&mut self, on: bool) {
+        self.herdr.args.retain(|a| !is_bypass_flag(a));
+        if on && let Some(f) = bypass_flag(&self.herdr.agent) {
+            self.herdr.args.insert(0, f.to_string());
+        }
+    }
+
     /// « codex --yolo » : l'agent tel qu'il sera lance.
     pub fn agent_label(&self) -> String {
         std::iter::once(self.herdr.agent.as_str())
@@ -416,6 +459,29 @@ command = "gvim"
         assert_eq!(cfg.remote.servers[0].paths, ["/home/jp/app"]);
         let back = Config::parse(&toml::to_string_pretty(&cfg).unwrap()).unwrap();
         assert_eq!(back.remote.servers, cfg.remote.servers);
+    }
+
+    #[test]
+    fn choix_de_l_agent() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.agent_label(), "codex --yolo");
+        assert!(cfg.agent_bypass());
+        cfg.herdr.args.push("--search".into());
+        cfg.set_agent("claude");
+        assert_eq!(
+            cfg.agent_label(),
+            "claude --dangerously-skip-permissions --search"
+        );
+        assert_eq!(cfg.agent_name(), "Claude");
+        cfg.set_agent_bypass(false);
+        assert_eq!(cfg.agent_label(), "claude --search");
+        cfg.set_agent("codex");
+        assert_eq!(cfg.agent_label(), "codex --search");
+        cfg.herdr.agent = "gemini".into();
+        assert_eq!(cfg.agent_name(), "gemini");
+        // Agent sans option connue : rien n'est ajouté.
+        cfg.set_agent_bypass(true);
+        assert_eq!(cfg.agent_label(), "gemini --search");
     }
 
     #[test]

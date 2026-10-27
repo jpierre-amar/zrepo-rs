@@ -19,7 +19,7 @@ use eframe::egui::{
 use zrepo_core::{
     apps::{self, EditorConfig},
     auth::{self, DeviceCode, Poll, TokenSource},
-    config::{Config, RemoteServer},
+    config::{AGENTS, Config, RemoteServer},
     open::{self, Target},
     shortcut::Shortcut,
     sources,
@@ -1390,17 +1390,19 @@ impl Setup {
                 .color(pal.text),
         );
         ui.add_space(2.0);
-        let agent = self.cfg.agent_label();
         let herdr_toggled = ui
             .add_enabled_ui(!cfg!(windows), |ui| {
                 ui.checkbox(
                     &mut self.cfg.herdr.enabled,
-                    format!("Proposer Herdr + {agent} quand il est installé"),
+                    "Proposer Herdr quand il est installé",
                 )
             })
             .inner
             .changed();
         if herdr_toggled {
+            self.refresh_targets();
+        }
+        if self.cfg.herdr.enabled && !cfg!(windows) && self.herdr_agent_ui(ui, pal) {
             self.refresh_targets();
         }
         ui.checkbox(&mut self.cfg.github.enabled, "Afficher mes dépôts GitHub");
@@ -1655,6 +1657,51 @@ impl Setup {
             disk.ui.shortcut_label = label;
             let _ = disk.save();
         }
+    }
+
+    /// Agent démarré dans Herdr : Codex ou Claude, avec ou sans confirmations.
+    /// Rend true si le choix a changé (les libellés des cibles en dépendent).
+    fn herdr_agent_ui(&mut self, ui: &mut egui::Ui, pal: &Pal) -> bool {
+        let mut changed = false;
+        ui.indent("herdr_agent", |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Agent").size(13.0).color(pal.weak));
+                ui.add_space(4.0);
+                for (kind, name, _) in AGENTS {
+                    let selected = self.cfg.herdr.agent == kind;
+                    if ui.radio(selected, name).clicked() && !selected {
+                        self.cfg.set_agent(kind);
+                        changed = true;
+                    }
+                    if detect::which(kind).is_none() {
+                        ui.label(RichText::new("(non installé)").size(12.0).color(pal.faint));
+                    }
+                    ui.add_space(10.0);
+                }
+            });
+            let mut bypass = self.cfg.agent_bypass();
+            let flag = AGENTS
+                .iter()
+                .find(|a| a.0 == self.cfg.herdr.agent)
+                .map(|a| a.2);
+            if let Some(flag) = flag
+                && ui
+                    .checkbox(
+                        &mut bypass,
+                        format!("Autoriser toutes ses actions sans confirmation ({flag})"),
+                    )
+                    .changed()
+            {
+                self.cfg.set_agent_bypass(bypass);
+                changed = true;
+            }
+            ui.label(
+                RichText::new(format!("Lancé ainsi : {}", self.cfg.agent_label()))
+                    .size(12.0)
+                    .color(pal.faint),
+            );
+        });
+        changed
     }
 
     /// macOS et Windows : un agent, lancé avec la session, écoute la combinaison.

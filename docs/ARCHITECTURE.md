@@ -4,7 +4,7 @@ zrepo-rs est un lanceur de projets multiplateforme (Linux, macOS, Windows). Il a
 dans une **fenêtre graphique** flottante (style Raycast ou Spotlight) les projets
 locaux, les projets distants (déclarés dans les `ssh_connections` de Zed) et les
 dépôts GitHub du compte. Il ouvre ensuite le projet choisi dans **Zed**, ou dans
-**Herdr + un agent** (codex --yolo) quand Herdr est installé. Un dépôt GitHub
+**Herdr + un agent** (codex --yolo, ou claude) quand Herdr est installé. Un dépôt GitHub
 absent en local est cloné d'abord.
 
 Langue de l'interface et des messages : **français** (avec accents).
@@ -47,8 +47,8 @@ ssh_timeout = 8
 
 [herdr]
 enabled = true                       # n'apparaît que si `herdr` est dans le PATH
-agent = "codex"
-args = ["--yolo"]
+agent = "codex"                      # ou "claude" ; config::AGENTS
+args = ["--yolo"]                    # claude : --dangerously-skip-permissions
 wait = 20
 
 [ui]

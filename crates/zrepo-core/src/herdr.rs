@@ -1,5 +1,5 @@
 //! Ouverture dans Herdr : nouvel espace sur le dossier du projet, avec
-//! l'agent (codex --yolo par defaut) demarre dedans. Un projet distant va sur
+//! l'agent (codex --yolo par defaut, ou claude) demarre dedans. Un projet distant va sur
 //! sa machine Herdr ; rien n'est monte ni copie.
 
 use std::{
@@ -236,24 +236,23 @@ fn blocking_rule(explain: &Value) -> Option<String> {
     text(&explain["matched_rule"]["id"])
 }
 
-fn not_ready_text(kind: &str, rule: Option<&str>, pane: &str, label: &str) -> String {
+/// Message de réussite quand l'agent attend une réponse au démarrage. Contient
+/// « démarré dans » : `zrepo-rs open` l'affiche comme résultat.
+fn not_ready_text(name: &str, rule: Option<&str>, pane: &str) -> String {
     match rule {
-        Some("trust_directory") => {
-            format!("Codex demande de faire confiance à ce dossier : répondez dans le pane {pane}.")
+        Some("trust_directory") => format!(
+            "{name} démarré dans {pane} : il demande de faire confiance à ce dossier, \
+             répondez-lui dans Herdr."
+        ),
+        _ => {
+            format!("{name} démarré dans {pane} : il attend une réponse, répondez-lui dans Herdr.")
         }
-        Some(r) => format!(
-            "{kind} attend une réponse au démarrage (règle Herdr « {r} ») : \
-             répondez dans le pane {pane}.\nS'il ne démarre pas, lancez-le à la main : {label}"
-        ),
-        None => format!(
-            "{kind} attend une réponse au démarrage : regardez le pane {pane}.\n\
-             S'il ne démarre pas, lancez-le à la main : {label}"
-        ),
     }
 }
 
-/// L'agent attend une confirmation (« Trust this folder? »...) : on montre le
-/// pane a l'utilisateur et on lui laisse la reponse. Rien n'est envoye au pane.
+/// L'agent attend une confirmation (« Trust this folder? »...) : c'est normal
+/// à la première ouverture d'un dossier. On montre le pane à l'utilisateur et
+/// on lui laisse la réponse : rien n'est envoyé au pane.
 fn not_ready(h: &Herdr, cfg: &Config, agent: &str, pane: &str) -> String {
     let rule = [agent, pane].into_iter().find_map(|t| {
         h.json(&["agent", "explain", t, "--json"])
@@ -263,7 +262,7 @@ fn not_ready(h: &Herdr, cfg: &Config, agent: &str, pane: &str) -> String {
     if !h.run(&["agent", "focus", agent]).0 {
         let _ = h.run(&["agent", "focus", pane]);
     }
-    not_ready_text(&cfg.herdr.agent, rule.as_deref(), pane, &cfg.agent_label())
+    not_ready_text(&cfg.agent_name(), rule.as_deref(), pane)
 }
 
 pub fn open(cfg: &Config, target: &str, progress: &dyn Fn(&str)) -> Res<()> {
@@ -349,8 +348,11 @@ pub fn open(cfg: &Config, target: &str, progress: &dyn Fn(&str)) -> Res<()> {
     ];
     args.extend(cfg.herdr.args.iter().map(String::as_str));
     let (ok, out, err) = h.run(&args);
+    // Démarré mais en attente d'une réponse (dossier à approuver...) : ce
+    // n'est pas un échec, l'utilisateur répond dans Herdr.
     if !ok && error_code(&out, &err).as_deref() == Some("agent_not_ready") {
-        return Err(Fail::new(EX_HERDR, not_ready(&h, cfg, &agent, &pane)));
+        progress(&not_ready(&h, cfg, &agent, &pane));
+        return Ok(());
     }
     if !ok {
         return Err(Fail::new(
@@ -399,18 +401,18 @@ mod tests {
         .unwrap();
         let rule = blocking_rule(&v);
         assert_eq!(rule.as_deref(), Some("trust_directory"));
+        let msg = not_ready_text("Codex", rule.as_deref(), "w3:p1");
         assert_eq!(
-            not_ready_text("codex", rule.as_deref(), "w3:p1", "codex --yolo"),
-            "Codex demande de faire confiance à ce dossier : répondez dans le pane w3:p1."
+            msg,
+            "Codex démarré dans w3:p1 : il demande de faire confiance à ce dossier, \
+             répondez-lui dans Herdr."
         );
         assert_eq!(
             blocking_rule(&serde_json::json!({"state": "blocked"})),
             None
         );
-
-        let other = not_ready_text("codex", Some("startup_update"), "w3:p1", "codex --yolo");
-        assert!(other.contains("startup_update") && other.contains("w3:p1"));
-        let unknown = not_ready_text("codex", None, "w3:p1", "codex --yolo");
-        assert!(unknown.contains("w3:p1") && !unknown.contains('{'));
+        let other = not_ready_text("Claude", Some("live_blocked_form"), "w3:p1");
+        assert!(other.starts_with("Claude démarré dans w3:p1") && !other.contains('{'));
+        assert_eq!(other, not_ready_text("Claude", None, "w3:p1"));
     }
 }

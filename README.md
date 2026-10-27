@@ -174,7 +174,13 @@ Au premier lancement (ou avec `zrepo-rs setup`), l'assistant vous guide :
    ou « Plus tard ». Le jeton est rangé dans le **trousseau du système** (service `zrepo-rs`,
    compte `github`), jamais dans un fichier.
 3. **Cibles** : outils détectés (Zed, Herdr, terminal, éditeurs connus), ajout de vos propres
-   éditeurs (« Ajouter un éditeur… » puis choix de l'exécutable), cible par défaut.
+   éditeurs (« Ajouter un éditeur… » puis choix de l'exécutable), cible par défaut. Pour Herdr :
+   l'agent lancé, **Codex** ou **Claude**, et s'il peut agir sans demander de confirmation
+   (`--yolo` pour Codex, `--dangerously-skip-permissions` pour Claude).
+
+   À la première ouverture d'un dossier, l'agent peut demander de lui faire confiance : ce
+   n'est pas une erreur. zrepo-rs se ferme, Herdr affiche le pane de l'agent, et vous
+   répondez vous-même ; zrepo-rs ne valide jamais cette question à votre place.
 4. **Serveurs** : découverte des alias SSH et des connexions Zed, puis ajout des serveurs et chemins de projets.
 5. **Raccourci clavier** (voir plus bas).
 6. Enregistrement de `config.toml`.
@@ -248,8 +254,8 @@ paths = ["/home/moi/projet"]    # facultatif : sans chemin, Ctrl-R lance un scan
 
 [herdr]
 enabled = true
-agent = "codex"
-args = ["--yolo"]
+agent = "codex"                 # ou "claude" (choix dans les réglages, étape Cibles)
+args = ["--yolo"]               # claude : ["--dangerously-skip-permissions"] ; [] = avec confirmations
 wait = 20
 
 [ui]
