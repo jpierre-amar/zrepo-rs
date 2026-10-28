@@ -19,7 +19,7 @@ zrepo-core = { path = "../zrepo-core" }
 
 # Agent du raccourci clavier global (macOS et Windows).
 [target."cfg(any(target_os = \"macos\", windows))".dependencies]
-global-hotkey = "0.8.0"
+global-hotkey = "0.9.0"
 winit = { version = "0.30.13", default-features = false, features = ["rwh_06"] }
 
 [target."cfg(windows)".dependencies]
